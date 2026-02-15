@@ -1105,7 +1105,7 @@ def show_multiplayer_menu():
         ver = small_font.render(f"v{VERSION}", True, GRAY)
         surf.blit(ver, (sw // 2 - ver.get_width() // 2, 95))
 
-        subtitle = title_font.render("Multiplayer", True, GOLD)
+        subtitle = title_font.render("Online", True, GOLD)
         surf.blit(subtitle, (sw // 2 - subtitle.get_width() // 2, 130))
 
         btn_w, btn_h = 350, 50
