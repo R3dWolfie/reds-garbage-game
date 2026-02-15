@@ -29,6 +29,9 @@ MSG_DISCONNECT = "disconnect"
 MSG_PING = "ping"
 MSG_PONG = "pong"
 MSG_GAME_START = "game_start"
+MSG_ENEMY_DEAD = "enemy_dead"
+MSG_WAVE_COMPLETE = "wave_complete"
+MSG_USERNAME = "username"
 
 
 def encode_message(msg_type, data=None):

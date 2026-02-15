@@ -21,6 +21,7 @@ class GameClient:
         self.lock = threading.Lock()
         self.message_queue = []
         self.remote_states = {}
+        self.remote_usernames = {}  # {player_id: username}
 
     def connect(self, host_ip, port=DEFAULT_PORT, timeout=10):
         """Connect to a host. Returns True on success."""
@@ -104,6 +105,12 @@ class GameClient:
             with self.lock:
                 self.remote_states[pid] = data
 
+        elif msg_type == MSG_USERNAME:
+            pid = data.get("player_id", -1)
+            username = data.get("username", f"Player{pid}")
+            with self.lock:
+                self.remote_usernames[pid] = username
+
         elif msg_type == MSG_DISCONNECT:
             pid = data.get("player_id", -1)
             if pid == -1:
@@ -128,6 +135,10 @@ class GameClient:
             print(f"[Client] Send error: {e}")
             self.connected = False
 
+    def send_username(self, username):
+        """Send our chosen username to the host."""
+        self.send(MSG_USERNAME, {"username": username})
+
     def send_player_state(self, x, y, health, class_key, level):
         """Send our current state to the host (called every frame or every few frames)."""
         self.send(MSG_PLAYER_STATE, {
@@ -149,3 +160,8 @@ class GameClient:
         """Get latest states of all remote players."""
         with self.lock:
             return dict(self.remote_states)
+
+    def get_remote_usernames(self):
+        """Get mapping of player_id -> username."""
+        with self.lock:
+            return dict(self.remote_usernames)

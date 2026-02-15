@@ -67,6 +67,7 @@ class GameHost:
                         "socket": conn,
                         "buffer": b"",
                         "name": f"Player {player_id}",
+                        "username": f"Player{player_id}",
                         "state": {},
                         "addr": addr,
                     }
@@ -150,6 +151,14 @@ class GameHost:
         elif msg_type == MSG_PING:
             self.send_to(from_id, MSG_PONG, {"time": data.get("time", 0)})
 
+        elif msg_type == MSG_USERNAME:
+            # Store and broadcast username to all others
+            username = data.get("username", f"Player{from_id}")
+            with self.lock:
+                if from_id in self.clients:
+                    self.clients[from_id]["username"] = username
+            self.broadcast(MSG_USERNAME, {"player_id": from_id, "username": username}, exclude=from_id)
+
         elif msg_type == MSG_DISCONNECT:
             self._disconnect_player(from_id)
 
@@ -220,3 +229,8 @@ class GameHost:
         """Get the latest state of all remote players."""
         with self.lock:
             return {pid: c["state"] for pid, c in self.clients.items() if c["state"]}
+
+    def get_usernames(self):
+        """Get mapping of player_id -> username for all clients."""
+        with self.lock:
+            return {pid: c.get("username", f"Player{pid}") for pid, c in self.clients.items()}

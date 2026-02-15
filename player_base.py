@@ -24,6 +24,7 @@ class PlayerBase(pygame.sprite.Sprite):
         "damage": 1,
         "piercing": 1,
         "magnet": 0,
+        "bullet_size": 1,
     }
 
     def __init__(self):
@@ -49,6 +50,7 @@ class PlayerBase(pygame.sprite.Sprite):
             "damage": 0,
             "piercing": 0,
             "magnet": 0,
+            "bullet_size": 0,
         }
 
         # Leveling
@@ -60,6 +62,15 @@ class PlayerBase(pygame.sprite.Sprite):
         self.collision_damage = 0
         self.collision_cooldown = 0
 
+        # Dash state
+        self.dash_cooldown = 0
+        self.dash_cooldown_max = 90   # 1.5s at 60fps
+        self.dash_duration = 0
+        self.dash_duration_max = 10   # frames the dash lasts
+        self.dash_dx = 0
+        self.dash_dy = 0
+        self.dash_invincible = False  # invincibility frames during dash
+
     def reposition(self, sw, sh):
         self.rect.center = (sw // 2, sh // 2)
 
@@ -67,14 +78,30 @@ class PlayerBase(pygame.sprite.Sprite):
         keys = pygame.key.get_pressed()
         speed = self.stats["speed"]
 
-        if keys[pygame.K_w] or keys[pygame.K_UP]:
-            self.rect.y -= speed
-        if keys[pygame.K_s] or keys[pygame.K_DOWN]:
-            self.rect.y += speed
-        if keys[pygame.K_a] or keys[pygame.K_LEFT]:
-            self.rect.x -= speed
-        if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
-            self.rect.x += speed
+        # Track movement direction for dash
+        move_dx, move_dy = 0, 0
+        if keys[pygame.K_w] or keys[pygame.K_UP]:    move_dy -= 1
+        if keys[pygame.K_s] or keys[pygame.K_DOWN]:  move_dy += 1
+        if keys[pygame.K_a] or keys[pygame.K_LEFT]:  move_dx -= 1
+        if keys[pygame.K_d] or keys[pygame.K_RIGHT]: move_dx += 1
+
+        # ---- DASH ----
+        if self.dash_duration > 0:
+            # Currently dashing — apply burst movement, ignore normal input
+            self.rect.x += self.dash_dx
+            self.rect.y += self.dash_dy
+            self.dash_duration -= 1
+            self.dash_invincible = True
+            if self.dash_duration == 0:
+                self.dash_invincible = False
+        else:
+            self.dash_invincible = False
+            self.rect.x += move_dx * speed
+            self.rect.y += move_dy * speed
+
+        # Cooldown tick
+        if self.dash_cooldown > 0:
+            self.dash_cooldown -= 1
 
         sw = SCREEN_WIDTH
         sh = SCREEN_HEIGHT
@@ -83,6 +110,31 @@ class PlayerBase(pygame.sprite.Sprite):
         # Reduce collision cooldown
         if self.collision_cooldown > 0:
             self.collision_cooldown -= 1
+
+    def try_dash(self):
+        """Called when Space is pressed. Returns True if dash triggered."""
+        if self.dash_cooldown > 0 or self.dash_duration > 0:
+            return False
+        keys = pygame.key.get_pressed()
+        dx, dy = 0, 0
+        if keys[pygame.K_w] or keys[pygame.K_UP]:    dy -= 1
+        if keys[pygame.K_s] or keys[pygame.K_DOWN]:  dy += 1
+        if keys[pygame.K_a] or keys[pygame.K_LEFT]:  dx -= 1
+        if keys[pygame.K_d] or keys[pygame.K_RIGHT]: dx += 1
+        # Default dash: forward (up) if no direction held
+        if dx == 0 and dy == 0:
+            dy = -1
+        dist = math.hypot(dx, dy)
+        dash_speed = self.stats["speed"] * 5
+        self.dash_dx = int((dx / dist) * dash_speed)
+        self.dash_dy = int((dy / dist) * dash_speed)
+        self.dash_duration = self.dash_duration_max
+        self.dash_cooldown = self.dash_cooldown_max
+        return True
+
+    def get_dash_cooldown_ratio(self):
+        """0.0 = ready, 1.0 = just used."""
+        return self.dash_cooldown / self.dash_cooldown_max
 
     def heal(self, amount):
         self.current_health = min(self.current_health + amount, self.stats["max_health"])
@@ -124,6 +176,9 @@ class PlayerBase(pygame.sprite.Sprite):
         elif upgrade_key == "magnet":
             self.stats["magnet"] += 1
             self.upgrade_counts["magnet"] += 1
+        elif upgrade_key == "bullet_size":
+            self.stats["bullet_size"] = round(self.stats["bullet_size"] + 0.3, 2)
+            self.upgrade_counts["bullet_size"] += 1
 
         # ---- Big ----
         elif upgrade_key == "big_speed":
@@ -151,6 +206,9 @@ class PlayerBase(pygame.sprite.Sprite):
         elif upgrade_key == "big_magnet":
             self.stats["magnet"] += 3
             self.upgrade_counts["magnet"] += 3
+        elif upgrade_key == "big_bullet_size":
+            self.stats["bullet_size"] = round(self.stats["bullet_size"] + 0.8, 2)
+            self.upgrade_counts["bullet_size"] += 3
 
     def get_weapon_type(self):
         """Override in subclass. Returns 'bullet', 'laser', 'ram', etc."""

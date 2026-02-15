@@ -6,9 +6,10 @@ from sprite_loader import load_sprite
 
 
 class Bullet(pygame.sprite.Sprite):
-    def __init__(self, start_pos, target_pos, speed, piercing=1):
+    def __init__(self, start_pos, target_pos, speed, piercing=1, size=1.0):
         super().__init__()
-        self.image = load_sprite("bullet.png", (10, 10), YELLOW, (10, 10))
+        base = max(4, int(10 * size))
+        self.image = load_sprite("bullet.png", (base, base), YELLOW, (base, base))
         self.rect = self.image.get_rect()
         self.rect.center = start_pos
 
@@ -34,9 +35,11 @@ class Bullet(pygame.sprite.Sprite):
 class LaserBeam(pygame.sprite.Sprite):
     """Slow, wide beam that pierces everything. Used by Arcanist class."""
 
-    def __init__(self, start_pos, target_pos, speed, piercing=999):
+    def __init__(self, start_pos, target_pos, speed, piercing=999, size=1.0):
         super().__init__()
-        self.image = load_sprite("laser_beam.png", (20, 8), LASER_RED, (20, 8))
+        w = max(8, int(20 * size))
+        h = max(4, int(8 * size))
+        self.image = load_sprite("laser_beam.png", (w, h), LASER_RED, (w, h))
         self.rect = self.image.get_rect()
         self.rect.center = start_pos
 

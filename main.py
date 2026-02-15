@@ -21,6 +21,7 @@ net_host = None
 net_client = None
 net_mode = None  # "host", "client", or None (singleplayer)
 remote_players = {}  # {player_id: {"x": ..., "y": ..., "class": ..., "level": ...}}
+local_username = "Player"  # Set by username input screen
 
 
 # ---- Initialize ----
@@ -362,7 +363,7 @@ def show_main_menu():
         surf.blit(subtitle, (sw // 2 - subtitle.get_width() // 2, sh // 4 + 30))
 
         # Button layout
-        btn_w = 200
+        btn_w = 260
         btn_h = 50
         btn_x = sw // 2 - btn_w // 2
         start_y = sh // 2 - 40
@@ -380,7 +381,7 @@ def show_main_menu():
         c = GRAY if mp_btn.collidepoint(mx, my) else DARK_GRAY
         pygame.draw.rect(surf, c, mp_btn)
         pygame.draw.rect(surf, CYAN, mp_btn, 3)
-        txt = title_font.render("MULTIPLAYER", True, CYAN)
+        txt = menu_font.render("MULTIPLAYER", True, CYAN)
         surf.blit(txt, (mp_btn.centerx - txt.get_width() // 2, mp_btn.centery - txt.get_height() // 2))
 
         # --- SETTINGS button ---
@@ -388,7 +389,7 @@ def show_main_menu():
         c = GRAY if settings_btn.collidepoint(mx, my) else DARK_GRAY
         pygame.draw.rect(surf, c, settings_btn)
         pygame.draw.rect(surf, GOLD, settings_btn, 3)
-        txt = title_font.render("SETTINGS", True, GOLD)
+        txt = menu_font.render("SETTINGS", True, GOLD)
         surf.blit(txt, (settings_btn.centerx - txt.get_width() // 2, settings_btn.centery - txt.get_height() // 2))
 
         # --- EXIT button ---
@@ -396,7 +397,7 @@ def show_main_menu():
         c = GRAY if exit_btn.collidepoint(mx, my) else DARK_GRAY
         pygame.draw.rect(surf, c, exit_btn)
         pygame.draw.rect(surf, RED, exit_btn, 3)
-        txt = title_font.render("EXIT", True, RED)
+        txt = menu_font.render("EXIT", True, RED)
         surf.blit(txt, (exit_btn.centerx - txt.get_width() // 2, exit_btn.centery - txt.get_height() // 2))
 
         # Controls hint
@@ -607,6 +608,7 @@ def draw_upgrade_counters(surf, player_obj):
         ("DMG",  "damage",       player_obj.stats["damage"]),
         ("PIER", "piercing",     player_obj.stats["piercing"]),
         ("MAG",  "magnet",       player_obj.get_magnet_radius()),
+        ("SIZE", "bullet_size",  f"{player_obj.stats.get('bullet_size', 1.0):.1f}x"),
     ]
 
     for i, (label, key, value) in enumerate(stat_display):
@@ -804,10 +806,24 @@ def run_game(class_key):
         wave_banner_timer = 120
         if wave_num % 10 == 0:
             boss = Boss(player_obj, wave_num)
+            boss._net_id = id(boss)
             all_sprites.add(boss)
             enemies_grp.add(boss)
+        # Host broadcasts new wave to clients immediately
+        if net_mode == "host" and net_host:
+            net_host.broadcast(MSG_WAVE_START, {
+                "wave": wave_num,
+                "active": True,
+                "enemies_remaining": enemies_to_spawn,
+            })
 
     start_wave(current_wave)
+
+    # Dash trail visual: list of (pos, alpha, frame) tuples
+    dash_trail = []
+    # Spectate state (multiplayer only)
+    spectating = False
+    spectate_target_id = None
 
     while True:
         sw = settings_module.SCREEN_WIDTH
@@ -818,35 +834,69 @@ def run_game(class_key):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit(); sys.exit()
-            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                action = show_pause_menu()
-                if action == "main_menu":
-                    return "main_menu"
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    if not spectating:
+                        action = show_pause_menu()
+                        if action == "main_menu":
+                            return "main_menu"
+                if event.key == pygame.K_SPACE and not spectating:
+                    if player_obj.try_dash():
+                        # Seed the trail with current position
+                        dash_trail.append([player_obj.rect.center, 200, 8])
+                # Spectate: cycle through remote players with arrow keys
+                if spectating and event.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                    ids = list(remote_players.keys())
+                    if ids:
+                        if spectate_target_id not in ids:
+                            spectate_target_id = ids[0]
+                        else:
+                            idx = ids.index(spectate_target_id)
+                            if event.key == pygame.K_RIGHT:
+                                spectate_target_id = ids[(idx + 1) % len(ids)]
+                            else:
+                                spectate_target_id = ids[(idx - 1) % len(ids)]
 
         # ---- WAVE SPAWNING ----
-        if wave_active:
-            if enemies_spawned < enemies_to_spawn:
-                spawn_timer += 1
-                if spawn_timer >= SPAWN_DELAY:
-                    spawn_timer = 0
-                    e = Enemy(player_obj, current_wave)
-                    all_sprites.add(e)
-                    enemies_grp.add(e)
-                    enemies_spawned += 1
+        # Clients don't spawn enemies autonomously — the host controls wave state
+        # and broadcasts MSG_WAVE_START. Clients receive that and call start_wave().
+        if net_mode != "client":
+            if wave_active:
+                if enemies_spawned < enemies_to_spawn:
+                    spawn_timer += 1
+                    if spawn_timer >= SPAWN_DELAY:
+                        spawn_timer = 0
+                        e = Enemy(player_obj, current_wave)
+                        e._net_id = id(e)  # Unique ID for network reporting
+                        all_sprites.add(e)
+                        enemies_grp.add(e)
+                        enemies_spawned += 1
+                else:
+                    if len(enemies_grp) == 0:
+                        wave_active = False
+                        wave_cooldown = WAVE_COOLDOWN_TIME
+                        # Tell clients the wave is over
+                        if net_mode == "host" and net_host:
+                            net_host.broadcast(MSG_WAVE_COMPLETE, {"wave": current_wave})
             else:
-                if len(enemies_grp) == 0:
-                    wave_active = False
-                    wave_cooldown = WAVE_COOLDOWN_TIME
+                wave_cooldown -= 1
+                if wave_cooldown <= 0:
+                    current_wave += 1
+                    start_wave(current_wave)
         else:
-            wave_cooldown -= 1
-            if wave_cooldown <= 0:
-                current_wave += 1
-                start_wave(current_wave)
+            # Client: just let existing enemies run; wave advancement comes from host
+            pass
 
         # ---- UPDATE ----
-        all_sprites.update()
+        if spectating:
+            # Only update non-player sprites (enemies, bullets, gems)
+            enemies_grp.update()
+            bullets_grp.update()
+            gems_grp.update()
+            health_orbs_grp.update()
+        else:
+            all_sprites.update()
 
-        # ---- MAGNET ----
         apply_magnet(player_obj, gems_grp)
 
         # ---- AUTO-FIRE ----
@@ -855,14 +905,36 @@ def run_game(class_key):
             if targets:
                 weapon = player_obj.get_weapon_type()
                 for target in targets:
+                    bsize = player_obj.stats.get("bullet_size", 1.0)
                     if weapon == "laser":
                         b = LaserBeam(player_obj.rect.center, target.rect.center,
-                                      player_obj.stats["bullet_speed"], player_obj.stats["piercing"])
+                                      player_obj.stats["bullet_speed"], player_obj.stats["piercing"],
+                                      size=bsize)
                     else:
                         b = Bullet(player_obj.rect.center, target.rect.center,
-                                   player_obj.stats["bullet_speed"], player_obj.stats["piercing"])
+                                   player_obj.stats["bullet_speed"], player_obj.stats["piercing"],
+                                   size=bsize)
                     all_sprites.add(b)
                     bullets_grp.add(b)
+
+                    # Broadcast bullet to all other players
+                    if net_mode in ("host", "client"):
+                        bullet_data = {
+                            "weapon": weapon,
+                            "bx": player_obj.rect.centerx,
+                            "by": player_obj.rect.centery,
+                            "tx": target.rect.centerx,
+                            "ty": target.rect.centery,
+                            "speed": player_obj.stats["bullet_speed"],
+                            "piercing": player_obj.stats["piercing"],
+                            "damage": player_obj.stats["damage"],
+                            "size": bsize,
+                        }
+                        if net_mode == "host" and net_host:
+                            net_host.broadcast(MSG_BULLET_FIRE, bullet_data)
+                        elif net_mode == "client" and net_client:
+                            net_client.send(MSG_BULLET_FIRE, bullet_data)
+
                 fire_cooldown = player_obj.stats["fire_rate"]
         else:
             fire_cooldown -= 1
@@ -876,9 +948,14 @@ def run_game(class_key):
                 if enemy in bullet.hit_enemies:
                     continue
                 bullet.hit_enemies.append(enemy)
-                dead = enemy.take_damage(player_obj.stats["damage"])
+                # Use network damage if this bullet came from a remote player
+                dmg = getattr(bullet, '_net_damage', None) or player_obj.stats["damage"]
+                dead = enemy.take_damage(dmg)
                 bullet.hits += 1
                 if dead:
+                    # Report kill to host (clients) so host can sync gems/drops
+                    if net_mode == "client" and net_client:
+                        net_client.send(MSG_ENEMY_DEAD, {"enemy_id": getattr(enemy, '_net_id', -1)})
                     handle_enemy_death(enemy, all_sprites, gems_grp, health_orbs_grp)
                 if bullet.hits >= bullet.piercing:
                     bullet.kill()
@@ -912,7 +989,7 @@ def run_game(class_key):
 
         # Enemies hit Player
         hit_enemies = pygame.sprite.spritecollide(player_obj, enemies_grp, False)
-        if hit_enemies:
+        if hit_enemies and not spectating and not player_obj.dash_invincible:
             now = pygame.time.get_ticks()
             if now - player_obj.last_hit > 1000:
                 worst_damage = max(e.damage for e in hit_enemies)
@@ -920,23 +997,45 @@ def run_game(class_key):
                 player_obj.last_hit = now
                 player_obj.set_hurt(True)
                 if player_obj.current_health <= 0:
-                    result = show_game_over(player_obj, current_wave)
-                    return result
+                    if net_mode in ("host", "client") and remote_players:
+                        # Enter spectate mode instead of game over
+                        spectating = True
+                        spectate_target_id = next(iter(remote_players))
+                        player_obj.kill()  # Remove from sprite groups
+                    else:
+                        result = show_game_over(player_obj, current_wave)
+                        return result
             else:
                 flicker = (now // 100) % 2 == 0
                 player_obj.set_hurt(flicker)
-        else:
+        elif not hit_enemies and not spectating:
             player_obj.set_hurt(False)
 
         # ---- DRAW ----
         surf.fill(BLACK)
 
         # Magnet ring (behind sprites)
-        player_obj.draw_magnet_ring(surf)
+        if not spectating:
+            player_obj.draw_magnet_ring(surf)
 
         # Tank ram aura
-        if hasattr(player_obj, 'draw_ram_aura'):
+        if not spectating and hasattr(player_obj, 'draw_ram_aura'):
             player_obj.draw_ram_aura(surf)
+
+        # Dash trail
+        if player_obj.dash_duration > 0 or dash_trail:
+            dash_trail.append([player_obj.rect.center, 180, 6])
+        new_trail = []
+        for trail_entry in dash_trail:
+            pos, alpha, radius = trail_entry
+            if alpha > 0:
+                ts = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+                pygame.draw.circle(ts, (100, 200, 255, alpha), (radius, radius), radius)
+                surf.blit(ts, (pos[0] - radius, pos[1] - radius))
+                trail_entry[1] = max(0, alpha - 30)
+                trail_entry[2] = max(1, radius - 1)
+                new_trail.append(trail_entry)
+        dash_trail[:] = new_trail
 
         all_sprites.draw(surf)
         draw_enemy_health_bars(surf, enemies_grp)
@@ -955,20 +1054,63 @@ def run_game(class_key):
                     "health": player_obj.current_health,
                     "class": player_obj.CLASS_KEY,
                     "level": player_obj.level,
+                    "username": local_username,
                 })
 
             for msg in net_host.get_messages():
-                pass
+                msg_type = msg.get("type", "")
+                data = msg.get("data", {})
+                from_id = msg.get("_from", -1)
 
+                if msg_type == MSG_BULLET_FIRE:
+                    # Spawn remote bullet locally on host screen
+                    btype = data.get("weapon", "bullet")
+                    bpos = (data.get("bx", 0), data.get("by", 0))
+                    tpos = (data.get("tx", 0), data.get("ty", 0))
+                    bspd = data.get("speed", 7)
+                    bprc = data.get("piercing", 1)
+                    bdmg = data.get("damage", 1)
+                    bsz  = data.get("size", 1.0)
+                    if btype == "laser":
+                        rb = LaserBeam(bpos, tpos, bspd, bprc, size=bsz)
+                    else:
+                        rb = Bullet(bpos, tpos, bspd, bprc, size=bsz)
+                    rb._net_damage = bdmg
+                    all_sprites.add(rb)
+                    bullets_grp.add(rb)
+
+                elif msg_type == MSG_ENEMY_DEAD:
+                    # Client reported killing an enemy — find and kill it by net_id
+                    eid = data.get("enemy_id", -1)
+                    for e in list(enemies_grp):
+                        if getattr(e, '_net_id', None) == eid:
+                            handle_enemy_death(e, all_sprites, gems_grp, health_orbs_grp)
+                            e.kill()
+                            break
+
+            # --- Host: update & broadcast remote player ghosts ---
+            usernames = net_host.get_usernames()
             for pid, state in net_host.get_remote_states().items():
                 if pid not in remote_players:
-                    ghost = RemotePlayerGhost(pid, state.get("class", "default"))
+                    uname = usernames.get(pid, f"Player{pid}")
+                    ghost = RemotePlayerGhost(pid, state.get("class", "default"), username=uname)
                     remote_players[pid] = ghost
+                else:
+                    uname = usernames.get(pid, remote_players[pid].username)
+                    remote_players[pid].username = uname
                 remote_players[pid].update_from_state(state)
                 remote_players[pid].update()
 
-            if wave_active and enemies_spawned <= enemies_to_spawn:
-                net_host.broadcast(MSG_WAVE_START, {"wave": current_wave})
+            # --- Host-authoritative wave broadcasting ---
+            # Broadcast current wave state every second so clients stay in sync
+            wave_bcast_timer = getattr(run_game, '_wave_bcast', 0) + 1
+            run_game._wave_bcast = wave_bcast_timer
+            if wave_bcast_timer % 60 == 0:
+                net_host.broadcast(MSG_WAVE_START, {
+                    "wave": current_wave,
+                    "active": wave_active,
+                    "enemies_remaining": len(enemies_grp),
+                })
 
         elif net_mode == "client" and net_client:
             net_send_timer += 1
@@ -983,13 +1125,64 @@ def run_game(class_key):
             for msg in net_client.get_messages():
                 msg_type = msg.get("type", "")
                 data = msg.get("data", {})
+
                 if msg_type == MSG_PLAYER_STATE:
                     pid = data.get("player_id", -1)
                     if pid not in remote_players:
-                        ghost = RemotePlayerGhost(pid, data.get("class", "default"))
+                        uname = data.get("username", f"Player{pid}")
+                        ghost = RemotePlayerGhost(pid, data.get("class", "default"), username=uname)
                         remote_players[pid] = ghost
                     remote_players[pid].update_from_state(data)
                     remote_players[pid].update()
+
+                elif msg_type == MSG_USERNAME:
+                    pid = data.get("player_id", -1)
+                    uname = data.get("username", f"Player{pid}")
+                    if pid in remote_players:
+                        remote_players[pid].username = uname
+
+                elif msg_type == MSG_BULLET_FIRE:
+                    # Spawn remote bullet locally on client screen
+                    btype = data.get("weapon", "bullet")
+                    bpos = (data.get("bx", 0), data.get("by", 0))
+                    tpos = (data.get("tx", 0), data.get("ty", 0))
+                    bspd = data.get("speed", 7)
+                    bprc = data.get("piercing", 1)
+                    bdmg = data.get("damage", 1)
+                    bsz  = data.get("size", 1.0)
+                    if btype == "laser":
+                        rb = LaserBeam(bpos, tpos, bspd, bprc, size=bsz)
+                    else:
+                        rb = Bullet(bpos, tpos, bspd, bprc, size=bsz)
+                    rb._net_damage = bdmg
+                    all_sprites.add(rb)
+                    bullets_grp.add(rb)
+
+                elif msg_type == MSG_WAVE_START:
+                    # Host told us which wave we're on
+                    srv_wave = data.get("wave", current_wave)
+                    if srv_wave != current_wave:
+                        # Advance to the host's wave
+                        current_wave = srv_wave
+                        # Clear existing enemies so we don't double-spawn
+                        for e in list(enemies_grp):
+                            e.kill()
+                        start_wave(current_wave)
+
+                elif msg_type == MSG_WAVE_COMPLETE:
+                    # Host says wave is done
+                    wave_active = False
+                    wave_cooldown = WAVE_COOLDOWN_TIME
+
+            # --- Client: suppress autonomous wave spawning ---
+            # Clients don't spawn enemies independently; they rely on the host's
+            # MSG_WAVE_START messages to stay in sync. So we skip the spawning
+            # logic block above when in client mode. We still allow enemies that
+            # exist locally to update & be killed by local bullets (damage is
+            # applied locally and reported back to host via MSG_ENEMY_DEAD).
+            # Reset wave_active so client loop doesn't advance waves on its own.
+            # (Handled by not re-running the wave spawning block — see comment
+            # below the wave spawning section.)
 
             if not net_client.connected:
                 pass
@@ -1001,9 +1194,45 @@ def run_game(class_key):
             surf.blit(ghost.image, ghost.rect)
             ghost.draw_label(surf)
 
-        # ========== DRAW UI ==========
-        draw_ui(surf, player_obj, current_wave, enemies_grp)
-        draw_boss_health_bar(surf, enemies_grp)
+        # ========== SPECTATE OVERLAY ==========
+        if spectating:
+            # Dark vignette
+            spec_overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
+            spec_overlay.fill((0, 0, 0, 120))
+            surf.blit(spec_overlay, (0, 0))
+
+            # Follow camera label (we can't truly move the camera but highlight who we're watching)
+            if spectate_target_id and spectate_target_id in remote_players:
+                ghost = remote_players[spectate_target_id]
+                # Draw a bright ring around spectated player
+                pygame.draw.circle(surf, CYAN, ghost.rect.center, ghost.rect.width + 8, 2)
+                name_surf = menu_font.render(f"Watching: {ghost.username}", True, CYAN)
+                surf.blit(name_surf, (sw // 2 - name_surf.get_width() // 2, 50))
+
+            dead_txt = title_font.render("YOU DIED", True, RED)
+            surf.blit(dead_txt, (sw // 2 - dead_txt.get_width() // 2, sh // 2 - 60))
+            spec_hint = small_font.render("Spectating  |  ← → to switch player", True, LIGHT_GRAY)
+            surf.blit(spec_hint, (sw // 2 - spec_hint.get_width() // 2, sh // 2 - 20))
+            wave_txt = small_font.render(f"Wave {current_wave}  |  {len(enemies_grp)} enemies remaining", True, GRAY)
+            surf.blit(wave_txt, (sw // 2 - wave_txt.get_width() // 2, sh // 2 + 10))
+        else:
+            # ========== DRAW UI ==========
+            draw_ui(surf, player_obj, current_wave, enemies_grp)
+            draw_boss_health_bar(surf, enemies_grp)
+
+            # Dash cooldown bar (bottom-centre)
+            dash_ratio = player_obj.get_dash_cooldown_ratio()
+            bar_w, bar_h = 120, 8
+            bar_x = sw // 2 - bar_w // 2
+            bar_y = sh - 20
+            pygame.draw.rect(surf, DARK_GRAY, (bar_x, bar_y, bar_w, bar_h))
+            ready_w = int(bar_w * (1.0 - dash_ratio))
+            bar_color = CYAN if dash_ratio == 0 else STEEL_BLUE
+            pygame.draw.rect(surf, bar_color, (bar_x, bar_y, ready_w, bar_h))
+            pygame.draw.rect(surf, WHITE, (bar_x, bar_y, bar_w, bar_h), 1)
+            dash_label = small_font.render("DASH [SPACE]" if dash_ratio == 0 else "DASH", True,
+                                           CYAN if dash_ratio == 0 else GRAY)
+            surf.blit(dash_label, (bar_x + bar_w // 2 - dash_label.get_width() // 2, bar_y - 16))
 
         if wave_banner_timer > 0:
             draw_wave_banner(surf, current_wave)
@@ -1028,11 +1257,12 @@ def run_game(class_key):
 class RemotePlayerGhost(pygame.sprite.Sprite):
     """Visual representation of another player in multiplayer."""
 
-    def __init__(self, player_id, class_key="default"):
+    def __init__(self, player_id, class_key="default", username=None):
         super().__init__()
         info = CLASS_INFO.get(class_key, CLASS_INFO["default"])
         self.player_id = player_id
         self.class_key = class_key
+        self.username = username or f"Player{player_id}"
         self.target_x = 0
         self.target_y = 0
         self.level = 1
@@ -1054,6 +1284,9 @@ class RemotePlayerGhost(pygame.sprite.Sprite):
         self.target_y = state.get("y", self.target_y)
         self.health = state.get("health", self.health)
         self.level = state.get("level", self.level)
+        # Update username if carried in state
+        if "username" in state:
+            self.username = state["username"]
 
         new_class = state.get("class", self.class_key)
         if new_class != self.class_key:
@@ -1074,12 +1307,95 @@ class RemotePlayerGhost(pygame.sprite.Sprite):
         self.rect.y += (self.target_y - self.rect.y) * 0.3
 
     def draw_label(self, surf):
-        label = small_font.render(f"P{self.player_id} Lv{self.level}", True, GOLD)
+        label = small_font.render(f"{self.username} Lv{self.level}", True, CYAN)
         surf.blit(label, (self.rect.centerx - label.get_width() // 2, self.rect.y - 18))
 
 
 # ===========================================================
-#              MULTIPLAYER MENU
+#                   USERNAME INPUT SCREEN
+# ===========================================================
+
+def show_username_input():
+    """Ask the player to enter a username before entering multiplayer. Returns the username string."""
+    global local_username
+    username = local_username  # Pre-fill with current value
+    input_active = True
+    MAX_LEN = 16
+
+    while True:
+        sw = settings_module.SCREEN_WIDTH
+        sh = settings_module.SCREEN_HEIGHT
+        surf = display_mgr.get_screen()
+        mx, my = pygame.mouse.get_pos()
+
+        surf.fill(BLACK)
+
+        title = header_font.render("ENTER USERNAME", True, CYAN)
+        surf.blit(title, (sw // 2 - title.get_width() // 2, sh // 4 - 30))
+
+        hint = small_font.render("Your name will be shown above your character.", True, GRAY)
+        surf.blit(hint, (sw // 2 - hint.get_width() // 2, sh // 4 + 35))
+
+        # Input box
+        box_w, box_h = 400, 55
+        box_x = sw // 2 - box_w // 2
+        box_y = sh // 2 - box_h // 2 - 20
+        box_rect = pygame.Rect(box_x, box_y, box_w, box_h)
+        pygame.draw.rect(surf, DARK_GRAY, box_rect)
+        pygame.draw.rect(surf, GOLD, box_rect, 3)
+
+        display_text = username + ("|" if (pygame.time.get_ticks() // 500) % 2 == 0 else "")
+        name_txt = title_font.render(display_text, True, WHITE)
+        surf.blit(name_txt, (box_x + 15, box_y + box_h // 2 - name_txt.get_height() // 2))
+
+        char_count = small_font.render(f"{len(username)}/{MAX_LEN}", True, GRAY)
+        surf.blit(char_count, (box_x + box_w - char_count.get_width() - 8, box_y + box_h + 6))
+
+        # Confirm button
+        btn_w, btn_h = 200, 45
+        btn_x = sw // 2 - btn_w // 2
+        btn_y = sh // 2 + 60
+        confirm_btn = pygame.Rect(btn_x, btn_y, btn_w, btn_h)
+        can_confirm = len(username.strip()) > 0
+        btn_color = GRAY if (can_confirm and confirm_btn.collidepoint(mx, my)) else DARK_GRAY
+        border_color = GREEN if can_confirm else DARK_GRAY
+        pygame.draw.rect(surf, btn_color, confirm_btn)
+        pygame.draw.rect(surf, border_color, confirm_btn, 3)
+        btn_txt = menu_font.render("Confirm", True, GREEN if can_confirm else GRAY)
+        surf.blit(btn_txt, (confirm_btn.centerx - btn_txt.get_width() // 2,
+                            confirm_btn.centery - btn_txt.get_height() // 2))
+
+        pygame.display.flip()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit(); sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_RETURN:
+                    if username.strip():
+                        local_username = username.strip()
+                        return local_username
+                elif event.key == pygame.K_BACKSPACE:
+                    username = username[:-1]
+                elif event.key == pygame.K_ESCAPE:
+                    # Allow skipping with default name
+                    if not username.strip():
+                        username = "Player"
+                    local_username = username.strip()
+                    return local_username
+                else:
+                    if len(username) < MAX_LEN and event.unicode.isprintable():
+                        username += event.unicode
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if confirm_btn.collidepoint(event.pos) and username.strip():
+                    local_username = username.strip()
+                    return local_username
+
+        clock.tick(60)
+
+
+# ===========================================================
+#                   MULTIPLAYER MENU
 # ===========================================================
 
 def show_multiplayer_menu():
@@ -1126,8 +1442,10 @@ def show_multiplayer_menu():
         pygame.draw.rect(surf, c, host_btn)
         pygame.draw.rect(surf, CYAN, host_btn, 3)
         local_ip = get_local_ip()
-        txt = menu_font.render(f"Host Game  ({local_ip})", True, CYAN)
-        surf.blit(txt, (host_btn.centerx - txt.get_width() // 2, host_btn.centery - txt.get_height() // 2))
+        txt = menu_font.render("Host Game", True, CYAN)
+        surf.blit(txt, (host_btn.centerx - txt.get_width() // 2, host_btn.centery - txt.get_height() // 2 - 8))
+        ip_sub = small_font.render(f"Your IP: {local_ip}", True, CYAN)
+        surf.blit(ip_sub, (host_btn.centerx - ip_sub.get_width() // 2, host_btn.centery + 10))
 
         # Join section
         join_label = menu_font.render("Join by IP:", True, ORANGE)
@@ -1179,6 +1497,7 @@ def show_multiplayer_menu():
                             net_client = GameClient()
                             if net_client.connect(ip):
                                 net_mode = "client"
+                                net_client.send_username(local_username)
                                 return "client", net_client
                             else:
                                 status_msg = "Connection failed!"
@@ -1214,6 +1533,7 @@ def show_multiplayer_menu():
                         net_client = GameClient()
                         if net_client.connect(ip):
                             net_mode = "client"
+                            net_client.send_username(local_username)
                             return "client", net_client
                         else:
                             status_msg = "Connection failed!"
@@ -1255,38 +1575,42 @@ def show_lobby():
         surf.blit(title, (sw // 2 - title.get_width() // 2, 40))
 
         if net_mode == "host":
-            info = title_font.render("You are the HOST", True, GREEN)
+            info = menu_font.render("You are the HOST", True, GREEN)
             surf.blit(info, (sw // 2 - info.get_width() // 2, 110))
 
-            ip_text = title_font.render(f"Your IP: {local_ip}", True, WHITE)
-            surf.blit(ip_text, (sw // 2 - ip_text.get_width() // 2, 150))
+            ip_text = menu_font.render(f"Your IP: {local_ip}", True, WHITE)
+            surf.blit(ip_text, (sw // 2 - ip_text.get_width() // 2, 145))
 
             hint = small_font.render("Share this IP with your friend!", True, GRAY)
-            surf.blit(hint, (sw // 2 - hint.get_width() // 2, 185))
+            surf.blit(hint, (sw // 2 - hint.get_width() // 2, 175))
 
             player_count = 1
             if net_host and hasattr(net_host, 'clients'):
                 player_count += len(net_host.clients)
 
-            players_text = title_font.render(f"Players: {player_count}", True, WHITE)
-            surf.blit(players_text, (sw // 2 - players_text.get_width() // 2, 240))
+            players_text = menu_font.render(f"Players: {player_count}", True, WHITE)
+            surf.blit(players_text, (sw // 2 - players_text.get_width() // 2, 210))
 
             # Player list
             y_off = 280
-            label = small_font.render("- You (Host)", True, GREEN)
+            label = small_font.render(f"- {local_username} (You - Host)", True, GREEN)
             surf.blit(label, (sw // 2 - 80, y_off))
             y_off += 25
             if net_host and hasattr(net_host, 'clients'):
+                usernames = net_host.get_usernames()
                 for i, cid in enumerate(net_host.clients):
-                    cl = small_font.render(f"- Player {i + 2} (Connected)", True, CYAN)
+                    uname = usernames.get(cid, f"Player{cid}")
+                    cl = small_font.render(f"- {uname} (Connected)", True, CYAN)
                     surf.blit(cl, (sw // 2 - 80, y_off))
                     y_off += 25
 
         elif net_mode == "client":
-            info = title_font.render("Connected to host!", True, CYAN)
+            info = menu_font.render("Connected to host!", True, CYAN)
             surf.blit(info, (sw // 2 - info.get_width() // 2, 110))
-            waiting = title_font.render("Waiting for host to start...", True, GRAY)
-            surf.blit(waiting, (sw // 2 - waiting.get_width() // 2, 160))
+            waiting = menu_font.render("Waiting for host to start...", True, GRAY)
+            surf.blit(waiting, (sw // 2 - waiting.get_width() // 2, 148))
+            you_label = small_font.render(f"Your name: {local_username}", True, GOLD)
+            surf.blit(you_label, (sw // 2 - you_label.get_width() // 2, 180))
 
         # Buttons
         btn_w = 250
@@ -1299,14 +1623,14 @@ def show_lobby():
             c = GRAY if start_btn.collidepoint(mx, my) else DARK_GRAY
             pygame.draw.rect(surf, c, start_btn)
             pygame.draw.rect(surf, GREEN, start_btn, 3)
-            txt = title_font.render("START GAME", True, GREEN)
+            txt = menu_font.render("START GAME", True, GREEN)
             surf.blit(txt, (start_btn.centerx - txt.get_width() // 2, start_btn.centery - txt.get_height() // 2))
 
         leave_btn = pygame.Rect(btn_x, sh - 90, btn_w, btn_h)
         c = GRAY if leave_btn.collidepoint(mx, my) else DARK_GRAY
         pygame.draw.rect(surf, c, leave_btn)
         pygame.draw.rect(surf, RED, leave_btn, 3)
-        txt = title_font.render("LEAVE", True, RED)
+        txt = menu_font.render("LEAVE", True, RED)
         surf.blit(txt, (leave_btn.centerx - txt.get_width() // 2, leave_btn.centery - txt.get_height() // 2))
 
         pygame.display.flip()
@@ -1363,6 +1687,7 @@ def main():
                 continue
 
         elif result == "multiplayer":
+            show_username_input()
             mode, net_obj = show_multiplayer_menu()
 
             if mode == "back":

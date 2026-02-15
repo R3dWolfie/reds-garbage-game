@@ -83,6 +83,7 @@ UPGRADE_POOL = [
     {"key": "damage",       "name": "Damage +1",           "desc": "Hit harder"},
     {"key": "piercing",     "name": "Piercing +1",         "desc": "Bullets pass through"},
     {"key": "magnet",       "name": "Magnet +50px",        "desc": "Pull XP from further"},
+    {"key": "bullet_size",  "name": "Bullet Size +30%",    "desc": "Bigger bullets, bigger hitbox"},
 ]
 
 # Big Upgrade Pool (every 5 levels)
@@ -95,6 +96,7 @@ BIG_UPGRADE_POOL = [
     {"key": "big_damage",       "name": "★ Damage +3",                "desc": "Massive damage boost"},
     {"key": "big_piercing",     "name": "★ Piercing +3",              "desc": "Bullets shred through"},
     {"key": "big_magnet",       "name": "★ Magnet +150px",            "desc": "Vacuum everything"},
+    {"key": "big_bullet_size",  "name": "★ Bullet Size +80%",         "desc": "Massive projectiles"},
 ]
 
 # Class Definitions (for selection screen)
