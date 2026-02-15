@@ -4,11 +4,17 @@ import os
 
 # ---- Default Config ----
 DEFAULT_CONFIG = {
-    "resolution": [1280, 720],
-    "fullscreen": False,
+    "resolution": [1920, 1080],
+    "fullscreen": True,
     "master_volume": 0.7,
     "sfx_volume": 0.7,
     "music_volume": 0.5,
+}
+
+# Old defaults we want to upgrade away from automatically
+_OLD_DEFAULTS = {
+    "resolution": [1280, 720],
+    "fullscreen": False,
 }
 
 CONFIG_FILE = "config.json"
@@ -19,8 +25,14 @@ def load_config():
         try:
             with open(CONFIG_FILE, "r") as f:
                 data = json.load(f)
+            # Fill in any missing keys
             for key in DEFAULT_CONFIG:
                 if key not in data:
+                    data[key] = DEFAULT_CONFIG[key]
+            # Migrate old default values to new defaults
+            # (only if the player hasn't customised them away from the old default)
+            for key, old_val in _OLD_DEFAULTS.items():
+                if data.get(key) == old_val:
                     data[key] = DEFAULT_CONFIG[key]
             return data
         except Exception:
@@ -83,7 +95,6 @@ UPGRADE_POOL = [
     {"key": "damage",       "name": "Damage +1",           "desc": "Hit harder"},
     {"key": "piercing",     "name": "Piercing +1",         "desc": "Bullets pass through"},
     {"key": "magnet",       "name": "Magnet +50px",        "desc": "Pull XP from further"},
-    {"key": "bullet_size",  "name": "Bullet Size +30%",    "desc": "Bigger bullets, bigger hitbox"},
 ]
 
 # Big Upgrade Pool (every 5 levels)
@@ -96,7 +107,6 @@ BIG_UPGRADE_POOL = [
     {"key": "big_damage",       "name": "★ Damage +3",                "desc": "Massive damage boost"},
     {"key": "big_piercing",     "name": "★ Piercing +3",              "desc": "Bullets shred through"},
     {"key": "big_magnet",       "name": "★ Magnet +150px",            "desc": "Vacuum everything"},
-    {"key": "big_bullet_size",  "name": "★ Bullet Size +80%",         "desc": "Massive projectiles"},
 ]
 
 # Class Definitions (for selection screen)

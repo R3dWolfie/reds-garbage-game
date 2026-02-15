@@ -86,6 +86,12 @@ class DisplayManager:
 
 display_mgr = DisplayManager()
 screen = display_mgr.get_screen()
+
+# Scrap (clipboard) requires a display to exist first
+try:
+    pygame.scrap.init()
+except Exception:
+    pass
 clock = pygame.time.Clock()
 
 # Fonts
@@ -1378,11 +1384,22 @@ def show_username_input():
                 elif event.key == pygame.K_BACKSPACE:
                     username = username[:-1]
                 elif event.key == pygame.K_ESCAPE:
-                    # Allow skipping with default name
                     if not username.strip():
                         username = "Player"
                     local_username = username.strip()
                     return local_username
+                elif event.key == pygame.K_v and (pygame.key.get_mods() & pygame.KMOD_CTRL):
+                    # Paste from clipboard
+                    try:
+                        if not pygame.scrap.get_init():
+                            pygame.scrap.init()
+                        clip = pygame.scrap.get(pygame.SCRAP_TEXT)
+                        if clip:
+                            text = clip.decode("utf-8", errors="ignore").replace("\x00", "").strip()
+                            remaining = MAX_LEN - len(username)
+                            username += text[:remaining]
+                    except Exception:
+                        pass
                 else:
                     if len(username) < MAX_LEN and event.unicode.isprintable():
                         username += event.unicode
@@ -1505,6 +1522,18 @@ def show_multiplayer_menu():
                                 net_client = None
                     elif event.key == pygame.K_BACKSPACE:
                         ip_input = ip_input[:-1]
+                    elif event.key == pygame.K_v and (pygame.key.get_mods() & pygame.KMOD_CTRL):
+                        # Paste from clipboard
+                        try:
+                            if not pygame.scrap.get_init():
+                                pygame.scrap.init()
+                            clip = pygame.scrap.get(pygame.SCRAP_TEXT)
+                            if clip:
+                                text = clip.decode("utf-8", errors="ignore").replace("\x00", "").strip()
+                                remaining = 21 - len(ip_input)
+                                ip_input += text[:remaining]
+                        except Exception:
+                            pass
                     else:
                         if len(ip_input) < 21:
                             ip_input += event.unicode
