@@ -1,0 +1,29 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:  # Manual trigger from GitHub website
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pygame pyinstaller requests
+
+      - name: Build EXE
+        run: |
+          python -m PyInstaller --name="RedsGarbageGame" --onedir --noconsole --add-data="settings.py;." --add-data="updater;updater" --add-data="networking;networking" --add-data="config.json;." --add-data="player_base.py;." --add-data="player_default.py;." --add-data="player_tank.py;." --add-data="player_laser.py;." --add-data="enemy.py;." --add-data="objects.py;." --add-data="sprite_loader.py;." main.py
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedsGarbageGame-Windows
+          path: dist/RedsGarbageGame/
