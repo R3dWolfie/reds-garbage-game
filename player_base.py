@@ -178,6 +178,7 @@ class PlayerBase(pygame.sprite.Sprite):
             self.upgrade_counts["magnet"] += 1
         elif upgrade_key == "bullet_size":
             self.stats["bullet_size"] = round(self.stats["bullet_size"] + 0.3, 2)
+            self.stats["damage"] = round(self.stats["damage"] + 0.5, 2)
             self.upgrade_counts["bullet_size"] += 1
 
         # ---- Big ----
@@ -208,6 +209,7 @@ class PlayerBase(pygame.sprite.Sprite):
             self.upgrade_counts["magnet"] += 3
         elif upgrade_key == "big_bullet_size":
             self.stats["bullet_size"] = round(self.stats["bullet_size"] + 0.8, 2)
+            self.stats["damage"] = round(self.stats["damage"] + 1, 2)
             self.upgrade_counts["bullet_size"] += 3
 
     def get_weapon_type(self):

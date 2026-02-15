@@ -21,7 +21,7 @@ net_host = None
 net_client = None
 net_mode = None  # "host", "client", or None (singleplayer)
 remote_players = {}  # {player_id: {"x": ..., "y": ..., "class": ..., "level": ...}}
-local_username = "Player"  # Set by username input screen
+local_username = settings_module.config.get("username", "Player")
 
 
 # ---- Initialize ----
@@ -372,7 +372,7 @@ def show_main_menu():
         btn_w = 260
         btn_h = 50
         btn_x = sw // 2 - btn_w // 2
-        start_y = sh // 2 - 40
+        start_y = sh // 2 - 110
 
         # --- PLAY button ---
         play_btn = pygame.Rect(btn_x, start_y, btn_w, btn_h)
@@ -398,8 +398,18 @@ def show_main_menu():
         txt = menu_font.render("SETTINGS", True, GOLD)
         surf.blit(txt, (settings_btn.centerx - txt.get_width() // 2, settings_btn.centery - txt.get_height() // 2))
 
+        # --- USERNAME button ---
+        username_btn = pygame.Rect(btn_x, start_y + 210, btn_w, btn_h)
+        c = GRAY if username_btn.collidepoint(mx, my) else DARK_GRAY
+        pygame.draw.rect(surf, c, username_btn)
+        pygame.draw.rect(surf, PINK, username_btn, 3)
+        # Show the current username inside the button
+        uname_label = small_font.render(f"NAME: {local_username}", True, PINK)
+        surf.blit(uname_label, (username_btn.centerx - uname_label.get_width() // 2,
+                                username_btn.centery - uname_label.get_height() // 2))
+
         # --- EXIT button ---
-        exit_btn = pygame.Rect(btn_x, start_y + 210, btn_w, btn_h)
+        exit_btn = pygame.Rect(btn_x, start_y + 280, btn_w, btn_h)
         c = GRAY if exit_btn.collidepoint(mx, my) else DARK_GRAY
         pygame.draw.rect(surf, c, exit_btn)
         pygame.draw.rect(surf, RED, exit_btn, 3)
@@ -424,6 +434,8 @@ def show_main_menu():
                     return "multiplayer"
                 if settings_btn.collidepoint(event.pos):
                     settings_menu.run(surf.copy())
+                if username_btn.collidepoint(event.pos):
+                    show_username_input()
                 if exit_btn.collidepoint(event.pos):
                     pygame.quit()
                     sys.exit()
@@ -1321,6 +1333,12 @@ class RemotePlayerGhost(pygame.sprite.Sprite):
 #                   USERNAME INPUT SCREEN
 # ===========================================================
 
+def _save_username(name):
+    """Persist username into config.json."""
+    settings_module.config["username"] = name
+    settings_module.save_config(settings_module.config)
+
+
 def show_username_input():
     """Ask the player to enter a username before entering multiplayer. Returns the username string."""
     global local_username
@@ -1380,6 +1398,7 @@ def show_username_input():
                 if event.key == pygame.K_RETURN:
                     if username.strip():
                         local_username = username.strip()
+                        _save_username(local_username)
                         return local_username
                 elif event.key == pygame.K_BACKSPACE:
                     username = username[:-1]
@@ -1387,6 +1406,7 @@ def show_username_input():
                     if not username.strip():
                         username = "Player"
                     local_username = username.strip()
+                    _save_username(local_username)
                     return local_username
                 elif event.key == pygame.K_v and (pygame.key.get_mods() & pygame.KMOD_CTRL):
                     # Paste from clipboard
@@ -1406,6 +1426,7 @@ def show_username_input():
             if event.type == pygame.MOUSEBUTTONDOWN:
                 if confirm_btn.collidepoint(event.pos) and username.strip():
                     local_username = username.strip()
+                    _save_username(local_username)
                     return local_username
 
         clock.tick(60)
@@ -1716,7 +1737,6 @@ def main():
                 continue
 
         elif result == "multiplayer":
-            show_username_input()
             mode, net_obj = show_multiplayer_menu()
 
             if mode == "back":

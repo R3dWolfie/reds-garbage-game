@@ -9,6 +9,7 @@ DEFAULT_CONFIG = {
     "master_volume": 0.7,
     "sfx_volume": 0.7,
     "music_volume": 0.5,
+    "username": "Player",
 }
 
 # Old defaults we want to upgrade away from automatically
@@ -37,7 +38,14 @@ def load_config():
             return data
         except Exception:
             return DEFAULT_CONFIG.copy()
-    return DEFAULT_CONFIG.copy()
+    # First launch — write defaults so the file exists going forward
+    defaults = DEFAULT_CONFIG.copy()
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(defaults, f, indent=2)
+    except Exception:
+        pass
+    return defaults
 
 
 def save_config(cfg):
@@ -95,6 +103,7 @@ UPGRADE_POOL = [
     {"key": "damage",       "name": "Damage +1",           "desc": "Hit harder"},
     {"key": "piercing",     "name": "Piercing +1",         "desc": "Bullets pass through"},
     {"key": "magnet",       "name": "Magnet +50px",        "desc": "Pull XP from further"},
+    {"key": "bullet_size",  "name": "Bullet Size +30%",    "desc": "Bigger hitbox, +0.5 damage"},
 ]
 
 # Big Upgrade Pool (every 5 levels)
@@ -107,6 +116,7 @@ BIG_UPGRADE_POOL = [
     {"key": "big_damage",       "name": "★ Damage +3",                "desc": "Massive damage boost"},
     {"key": "big_piercing",     "name": "★ Piercing +3",              "desc": "Bullets shred through"},
     {"key": "big_magnet",       "name": "★ Magnet +150px",            "desc": "Vacuum everything"},
+    {"key": "big_bullet_size",  "name": "★ Bullet Size +80%",         "desc": "Massive projectiles, +1 damage"},
 ]
 
 # Class Definitions (for selection screen)
