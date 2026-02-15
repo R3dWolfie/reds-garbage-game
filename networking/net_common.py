@@ -28,6 +28,7 @@ MSG_CHAT = "chat"
 MSG_DISCONNECT = "disconnect"
 MSG_PING = "ping"
 MSG_PONG = "pong"
+MSG_GAME_START = "game_start"
 
 
 def encode_message(msg_type, data=None):

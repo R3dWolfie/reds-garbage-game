@@ -1313,10 +1313,10 @@ def show_lobby():
 
         # Check for game start signal (client)
         if net_mode == "client" and net_client:
-            if hasattr(net_client, 'get_messages'):
-                for msg in net_client.get_messages():
-                    if msg.get("type") == "game_start":
-                        return "start"
+            for msg in net_client.get_messages():
+                msg_type = msg.get("type", "")
+                if msg_type == MSG_GAME_START:
+                    return "start"
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -1326,8 +1326,8 @@ def show_lobby():
                 return "leave"
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if net_mode == "host" and start_btn and start_btn.collidepoint(event.pos):
-                    if net_host and hasattr(net_host, 'broadcast'):
-                        net_host.broadcast({"type": "game_start"})
+                    if net_host:
+                        net_host.broadcast(MSG_GAME_START, {})
                     return "start"
                 if leave_btn.collidepoint(event.pos):
                     return "leave"
