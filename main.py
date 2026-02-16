@@ -21,6 +21,10 @@ def main():
     try:
         from updater.launcher import run_launcher
         run_launcher()
+    except SystemExit:
+        # restart_game() called sys.exit — make sure we actually die
+        import os
+        os._exit(0)
     except ImportError:
         pass
     except Exception as e:

@@ -285,10 +285,11 @@ def restart_game():
         print(f"[Updater] Restart failed: {e}")
         return  # Don't exit if restart failed
 
-    # Exit current process
+    # Exit current process — use os._exit to guarantee termination
+    # (sys.exit can be caught by try/except, os._exit cannot)
     import pygame
     try:
         pygame.quit()
     except Exception:
         pass
-    sys.exit(0)
+    os._exit(0)
