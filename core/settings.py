@@ -13,6 +13,8 @@ DEFAULT_CONFIG = {
     "mouse_move": False,
     "gold": 0,
     "highest_wave": 1,
+    "equipped_hat": None,
+    "collected_hats": [],
     "perma_upgrades": {
         "roomba_count": 0,
         "roomba_speed": 0,
@@ -187,8 +189,26 @@ CLASS_INFO = {
     "laser": {
         "name": "Arcanist",
         "color": LASER_RED,
-        "desc": "Fires slow but devastating laser beams that pierce all.",
+        "desc": "Fires a devastating beam that pierces everything in its path.",
         "icon_color": LASER_RED,
+    },
+    "gunner": {
+        "name": "Gunner",
+        "color": (255, 165, 0),
+        "desc": "Insane fire rate with wide spray. Death by a thousand cuts.",
+        "icon_color": (255, 165, 0),
+    },
+    "sniper": {
+        "name": "Sniper",
+        "color": (200, 50, 255),
+        "desc": "Slow but devastating shots. High pierce and bullet speed.",
+        "icon_color": (200, 50, 255),
+    },
+    "paladin": {
+        "name": "Paladin",
+        "color": (255, 215, 0),
+        "desc": "Self-healing aura. Tanky support. Heals allies in multiplayer.",
+        "icon_color": (255, 215, 0),
     },
 }
 
@@ -427,3 +447,99 @@ PERMA_SHOP_ITEMS = [
         "stat_per_level": "+8% extra drop chance",
     },
 ]
+# ═══════════════════ HAT SYSTEM ═══════════════════
+# Rarity: common (60%), uncommon (25%), rare (10%), epic (4%), legendary (1%)
+# source: "any" = any enemy, "boss" = boss only, "boss_XX" = specific boss wave
+
+HAT_DEFS = [
+    # ═══ COMMON (drop from any enemy) ═══
+    {"id": "none",          "name": "No Hat",           "rarity": "common",    "source": "any",     "color": None},
+    {"id": "beanie",        "name": "Beanie",           "rarity": "common",    "source": "any",     "color": (100, 150, 200)},
+    {"id": "cap",           "name": "Baseball Cap",     "rarity": "common",    "source": "any",     "color": (200, 50, 50)},
+    {"id": "headband",      "name": "Headband",         "rarity": "common",    "source": "any",     "color": (255, 255, 100)},
+    {"id": "bandana",       "name": "Bandana",          "rarity": "common",    "source": "any",     "color": (180, 80, 40)},
+    {"id": "hardhat",       "name": "Hard Hat",         "rarity": "common",    "source": "any",     "color": (255, 200, 0)},
+    {"id": "bucket",        "name": "Bucket",           "rarity": "common",    "source": "any",     "color": (160, 160, 170)},
+    {"id": "party",         "name": "Party Hat",        "rarity": "common",    "source": "any",     "color": (255, 100, 200)},
+    {"id": "bow",           "name": "Hair Bow",         "rarity": "common",    "source": "any",     "color": (255, 80, 120)},
+    {"id": "earmuffs",      "name": "Earmuffs",         "rarity": "common",    "source": "any",     "color": (200, 100, 100)},
+    {"id": "tinfoil",       "name": "Tinfoil Hat",      "rarity": "common",    "source": "any",     "color": (190, 195, 200)},
+    {"id": "backwards_cap", "name": "Backwards Cap",    "rarity": "common",    "source": "any",     "color": (50, 50, 200)},
+    {"id": "nightcap",      "name": "Nightcap",         "rarity": "common",    "source": "any",     "color": (80, 60, 140)},
+    # ═══ UNCOMMON ═══
+    {"id": "tophat",        "name": "Top Hat",          "rarity": "uncommon",  "source": "any",     "color": (30, 30, 40)},
+    {"id": "wizard",        "name": "Wizard Hat",       "rarity": "uncommon",  "source": "any",     "color": (80, 50, 180)},
+    {"id": "cowboy",        "name": "Cowboy Hat",       "rarity": "uncommon",  "source": "any",     "color": (160, 120, 60)},
+    {"id": "beret",         "name": "Beret",            "rarity": "uncommon",  "source": "any",     "color": (220, 40, 60)},
+    {"id": "antenna",       "name": "Alien Antenna",    "rarity": "uncommon",  "source": "any",     "color": (0, 255, 100)},
+    {"id": "fez",           "name": "Fez",              "rarity": "uncommon",  "source": "any",     "color": (180, 30, 30)},
+    {"id": "pirate",        "name": "Pirate Hat",       "rarity": "uncommon",  "source": "any",     "color": (40, 40, 50)},
+    {"id": "chef",          "name": "Chef Hat",         "rarity": "uncommon",  "source": "any",     "color": (240, 240, 245)},
+    {"id": "mohawk",        "name": "Mohawk",           "rarity": "uncommon",  "source": "any",     "color": (0, 220, 100)},
+    {"id": "flower",        "name": "Flower Crown",     "rarity": "uncommon",  "source": "any",     "color": (255, 120, 180)},
+    {"id": "straw",         "name": "Straw Hat",        "rarity": "uncommon",  "source": "any",     "color": (220, 190, 120)},
+    {"id": "afro",          "name": "Afro",             "rarity": "uncommon",  "source": "any",     "color": (80, 50, 30)},
+    {"id": "nurse",         "name": "Nurse Cap",        "rarity": "uncommon",  "source": "any",     "color": (240, 240, 245)},
+    {"id": "aviator",       "name": "Aviator Goggles",  "rarity": "uncommon",  "source": "any",     "color": (180, 120, 50)},
+    {"id": "ushanka",       "name": "Ushanka",          "rarity": "uncommon",  "source": "any",     "color": (100, 70, 50)},
+    # ═══ RARE (animated: subtle glow/pulse) ═══
+    {"id": "catears",       "name": "Cat Ears",         "rarity": "rare",      "source": "any",     "color": (255, 150, 200), "anim": "twitch"},
+    {"id": "devilhorns",    "name": "Devil Horns",      "rarity": "rare",      "source": "any",     "color": (255, 30, 30),   "anim": "pulse_glow"},
+    {"id": "halo",          "name": "Halo",             "rarity": "rare",      "source": "any",     "color": (255, 255, 180), "anim": "float"},
+    {"id": "crown",         "name": "Crown",            "rarity": "rare",      "source": "boss",    "color": (255, 215, 0),   "anim": "sparkle"},
+    {"id": "viking",        "name": "Viking Helm",      "rarity": "rare",      "source": "boss",    "color": (150, 150, 160)},
+    {"id": "bunnyears",     "name": "Bunny Ears",       "rarity": "rare",      "source": "any",     "color": (240, 220, 230), "anim": "bounce"},
+    {"id": "propeller",     "name": "Propeller Cap",    "rarity": "rare",      "source": "any",     "color": (50, 150, 255),  "anim": "spin"},
+    {"id": "shark",         "name": "Shark Fin",        "rarity": "rare",      "source": "boss",    "color": (100, 120, 140)},
+    {"id": "mushroom",      "name": "Mushroom Cap",     "rarity": "rare",      "source": "any",     "color": (255, 50, 50),   "anim": "spore"},
+    {"id": "samurai",       "name": "Samurai Helm",     "rarity": "rare",      "source": "boss",    "color": (80, 80, 90)},
+    {"id": "disco",         "name": "Disco Ball",       "rarity": "rare",      "source": "any",     "color": (200, 200, 220), "anim": "rainbow_spin"},
+    {"id": "witchhat",      "name": "Witch Hat",        "rarity": "rare",      "source": "any",     "color": (60, 40, 80),    "anim": "magic_dust"},
+    {"id": "antlers",       "name": "Antlers",          "rarity": "rare",      "source": "boss",    "color": (140, 100, 60)},
+    {"id": "tiara",         "name": "Tiara",            "rarity": "rare",      "source": "any",     "color": (200, 180, 255), "anim": "sparkle"},
+    # ═══ EPIC (animated: fire/lightning/smoke/magic) ═══
+    {"id": "flamehat",      "name": "Inferno Crown",    "rarity": "epic",      "source": "boss_70", "color": (255, 100, 0),   "anim": "fire"},
+    {"id": "icehat",        "name": "Frost Tiara",      "rarity": "epic",      "source": "boss_80", "color": (100, 200, 255), "anim": "frost"},
+    {"id": "voidhat",       "name": "Void Mask",        "rarity": "epic",      "source": "boss_60", "color": (120, 0, 200),   "anim": "void_swirl"},
+    {"id": "stormhat",      "name": "Storm Crest",      "rarity": "epic",      "source": "boss_50", "color": (50, 180, 255),  "anim": "lightning"},
+    {"id": "hydrahat",      "name": "Hydra Crest",      "rarity": "epic",      "source": "boss_20", "color": (0, 200, 100),   "anim": "poison_drip"},
+    {"id": "phantomhat",    "name": "Phantom Veil",     "rarity": "epic",      "source": "boss_30", "color": (180, 150, 255), "anim": "phase"},
+    {"id": "fortresshat",   "name": "Iron Bastion",     "rarity": "epic",      "source": "boss_40", "color": (140, 140, 155), "anim": "shield_pulse"},
+    {"id": "neonhat",       "name": "Neon Visor",       "rarity": "epic",      "source": "boss",    "color": (0, 255, 255),   "anim": "neon_flicker"},
+    {"id": "bloodcrown",    "name": "Blood Crown",      "rarity": "epic",      "source": "boss",    "color": (180, 0, 0),     "anim": "blood_drip"},
+    {"id": "soulflame",     "name": "Soul Flame",       "rarity": "epic",      "source": "boss",    "color": (100, 200, 255), "anim": "soulfire"},
+    {"id": "thunderhelm",   "name": "Thunder Helm",     "rarity": "epic",      "source": "boss",    "color": (255, 255, 100), "anim": "lightning"},
+    {"id": "toxicmask",     "name": "Toxic Mask",       "rarity": "epic",      "source": "boss",    "color": (80, 220, 0),    "anim": "toxic_bubble"},
+    {"id": "magichat",      "name": "Arcane Hat",       "rarity": "epic",      "source": "boss",    "color": (200, 100, 255), "anim": "magic_orbit"},
+    # ═══ LEGENDARY (animated: intense multi-effect) ═══
+    {"id": "omegahat",      "name": "Omega Halo",       "rarity": "legendary", "source": "boss_100","color": (255, 200, 255), "anim": "rainbow_halo"},
+    {"id": "shadowhat",     "name": "Shadow Veil",      "rarity": "legendary", "source": "boss_90", "color": (60, 60, 80),    "anim": "shadow_tendrils"},
+    {"id": "galaxyhat",     "name": "Galaxy Crown",     "rarity": "legendary", "source": "boss",    "color": (100, 50, 200),  "anim": "galaxy_swirl"},
+    {"id": "glitchhat",     "name": "Glitch Mask",      "rarity": "legendary", "source": "boss",    "color": (255, 0, 255),   "anim": "glitch"},
+    {"id": "phoenixhat",    "name": "Phoenix Plume",    "rarity": "legendary", "source": "boss",    "color": (255, 120, 0),   "anim": "phoenix_fire"},
+    {"id": "cosmichat",     "name": "Cosmic Crown",     "rarity": "legendary", "source": "boss",    "color": (180, 100, 255), "anim": "cosmic_rings"},
+]
+
+HAT_DROP_CHANCES = {
+    "common":    0.008,   # 0.8% from any enemy
+    "uncommon":  0.004,   # 0.4%
+    "rare":      0.002,   # 0.2%
+    "epic":      0.0,     # Only from specific bosses
+    "legendary": 0.0,     # Only from specific bosses
+}
+
+HAT_BOSS_DROP_CHANCES = {
+    "common":    0.15,
+    "uncommon":  0.10,
+    "rare":      0.06,
+    "epic":      0.04,
+    "legendary": 0.02,
+}
+
+RARITY_COLORS = {
+    "common":    (180, 180, 190),
+    "uncommon":  (57, 255, 20),
+    "rare":      (0, 180, 255),
+    "epic":      (180, 50, 255),
+    "legendary": (255, 200, 50),
+}

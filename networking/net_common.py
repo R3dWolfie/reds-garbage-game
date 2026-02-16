@@ -39,6 +39,8 @@ MSG_UPGRADE_PAUSE = "upgrade_pause"
 MSG_UPGRADE_RESUME = "upgrade_resume"
 MSG_PARTY_LEVEL_UP = "party_level_up"
 MSG_UPGRADE_DONE = "upgrade_done"
+MSG_GOLD_SYNC = "gold_sync"
+MSG_HAT_DROP = "hat_drop"
 
 
 def encode_message(msg_type, data=None):

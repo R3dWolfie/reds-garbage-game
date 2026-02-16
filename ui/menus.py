@@ -121,6 +121,28 @@ def _draw_class_icon(surf, cx, cy, sz, key, color):
         glow = pygame.Surface((sz+8, sz+8), pygame.SRCALPHA)
         pygame.draw.circle(glow, (*color[:3], 30), (sz//2+4, sz//2+4), r//3+4)
         surf.blit(glow, (cx-sz//2-4, cy-sz//2-4))
+    elif key == "gunner":
+        # Gunner — triple barrel / gatling
+        for off in [-r//3, 0, r//3]:
+            pygame.draw.line(surf, color, (cx+off, cy+r//3), (cx+off, cy-r), 3)
+            pygame.draw.circle(surf, color, (cx+off, cy-r), 3)
+        # Base
+        pygame.draw.rect(surf, color, (cx-r//2, cy+r//4, r, r//3), border_radius=3)
+    elif key == "sniper":
+        # Sniper — long rifle with scope
+        pygame.draw.line(surf, color, (cx, cy+r), (cx, cy-r), 3)
+        pygame.draw.circle(surf, color, (cx, cy-r//2), r//3, 2)
+        pygame.draw.circle(surf, color, (cx, cy-r//2), 2)
+        # Stock
+        pygame.draw.line(surf, color, (cx, cy+r), (cx-r//3, cy+r+4), 3)
+    elif key == "paladin":
+        # Paladin — cross/plus with glow ring
+        pygame.draw.rect(surf, color, (cx-r//5, cy-r+2, r*2//5, r*2-4), border_radius=2)
+        pygame.draw.rect(surf, color, (cx-r+2, cy-r//5, r*2-4, r*2//5), border_radius=2)
+        # Aura ring
+        glow = pygame.Surface((sz+8, sz+8), pygame.SRCALPHA)
+        pygame.draw.circle(glow, (*color[:3], 25), (sz//2+4, sz//2+4), r+2, 2)
+        surf.blit(glow, (cx-sz//2-4, cy-sz//2-4))
     else:
         pygame.draw.circle(surf, color, (cx, cy), r, 3)
         pygame.draw.circle(surf, color, (cx, cy), r//2)
@@ -132,6 +154,7 @@ def show_main_menu():
     from ui.settings_menu import settings_menu
     from ui.perma_shop import show_perma_shop
     from ui.username_input import show_username_input
+    from ui.hat_menu import show_hat_menu
     global _t, _hex_cache
 
     while True:
@@ -150,16 +173,17 @@ def show_main_menu():
         vt = small_font.render(f"v{VERSION}", True, (35,35,50))
         surf.blit(vt, (sw - vt.get_width() - 10, sh - 20))
 
-        bw, bh = 280, 48
+        bw, bh = 280, 44
         bx = sw//2 - bw//2
-        gap = 56
-        sy = sh//2 - 80
+        gap = 50
+        sy = sh//2 - 100
 
         gold = settings_module.config.get('gold', 0)
         btns = [
             ("PLAY",                 (57,255,20)),
             ("MULTIPLAYER",          (0,255,255)),
             (f"SHOP  ({gold}g)",     (255,200,50)),
+            ("HATS",                 (255,150,200)),
             ("SETTINGS",             (160,170,190)),
             (f"NAME: {gs.local_username}", (255,100,200)),
             ("QUIT",                 (255,30,60)),
@@ -170,7 +194,7 @@ def show_main_menu():
             _neon_btn(surf, r, lbl, col, menu_font, mx, my, _t)
             rects.append(r)
 
-        hint = small_font.render("WASD move  |  SPACE dash  |  ESC pause", True, (40,40,55))
+        hint = small_font.render("WASD move  |  SPACE/CLICK dash  |  ESC pause", True, (40,40,55))
         surf.blit(hint, (sw//2 - hint.get_width()//2, sh - 35))
 
         pygame.display.flip()
@@ -181,10 +205,11 @@ def show_main_menu():
                 if rects[0].collidepoint(ev.pos): return "play"
                 if rects[1].collidepoint(ev.pos): return "multiplayer"
                 if rects[2].collidepoint(ev.pos): show_perma_shop()
-                if rects[3].collidepoint(ev.pos):
+                if rects[3].collidepoint(ev.pos): show_hat_menu()
+                if rects[4].collidepoint(ev.pos):
                     settings_menu.run(surf.copy()); _hex_cache = None
-                if rects[4].collidepoint(ev.pos): show_username_input()
-                if rects[5].collidepoint(ev.pos): pygame.quit(); sys.exit()
+                if rects[5].collidepoint(ev.pos): show_username_input()
+                if rects[6].collidepoint(ev.pos): pygame.quit(); sys.exit()
         clock.tick(30)
 
 
@@ -199,10 +224,10 @@ def show_class_selection():
     waiting_for_players = False
     players_ready = set()
 
-    # Wave skip: every 10 waves, up to (highest_wave - 10)
+    # Wave skip: every 5 waves, up to (highest_wave - 5)
     highest = settings_module.config.get("highest_wave", 1)
     skip_options = [1]
-    for w in range(10, highest - 9, 10):
+    for w in range(5, highest - 4, 5):
         skip_options.append(w)
     skip_index = 0
 
@@ -221,16 +246,22 @@ def show_class_selection():
         else:
             _neon_text(surf, "CHOOSE YOUR CLASS", header_font, GOLD, sw//2, 40, pulse_t=_t*2)
 
-        cw, ch = 260, 330
-        total = len(class_keys) * cw + (len(class_keys)-1) * 25
-        start_x = sw//2 - total//2
-        neon = [(57,255,20), (70,130,255), (255,60,60)]
+        cw, ch = 220, 260
+        cols = 3
+        gap_x, gap_y = 16, 14
+        rows = (len(class_keys) + cols - 1) // cols
+        total_w = cols * cw + (cols-1) * gap_x
+        total_h = rows * ch + (rows-1) * gap_y
+        sx = sw//2 - total_w//2
+        sy = sh//2 - total_h//2 - 20
+        neon = [(57,255,20), (70,130,255), (255,60,60), (255,165,0), (200,50,255), (255,215,0)]
 
         card_rects = []
         for i, key in enumerate(class_keys):
             info = CLASS_INFO[key]
-            cx = start_x + i * (cw + 25)
-            cy = sh//2 - ch//2 - 20
+            row, col = i // cols, i % cols
+            cx = sx + col * (cw + gap_x)
+            cy = sy + row * (ch + gap_y)
             cr = pygame.Rect(cx, cy, cw, ch)
             card_rects.append((cr, key))
             hov = cr.collidepoint(mx, my)
@@ -247,20 +278,20 @@ def show_class_selection():
                 pygame.draw.rect(surf, (*nc, a), (cx-gi, cy-gi, cw+gi*2, ch+gi*2), 2, border_radius=6)
             pygame.draw.rect(surf, nc, cr, 2 if not hov else 3, border_radius=6)
 
-            _draw_class_icon(surf, cx + cw//2, cy + 48, 60, key, nc)
+            _draw_class_icon(surf, cx + cw//2, cy + 36, 48, key, nc)
 
-            nt = title_font.render(info["name"], True, WHITE if hov else nc)
-            surf.blit(nt, (cx+cw//2-nt.get_width()//2, cy+88))
+            nt = menu_font.render(info["name"], True, WHITE if hov else nc)
+            surf.blit(nt, (cx+cw//2-nt.get_width()//2, cy+66))
 
             words = info["desc"].split(); lines = []; cur = ""
             for w in words:
                 test = cur+" "+w if cur else w
-                if desc_font.size(test)[0] < cw-24: cur = test
+                if desc_font.size(test)[0] < cw-18: cur = test
                 else: lines.append(cur); cur = w
             if cur: lines.append(cur)
-            for j, line in enumerate(lines):
+            for j, line in enumerate(lines[:3]):
                 lt = desc_font.render(line, True, (160,170,185) if not hov else (200,210,225))
-                surf.blit(lt, (cx+cw//2-lt.get_width()//2, cy+126+j*17))
+                surf.blit(lt, (cx+cw//2-lt.get_width()//2, cy+88+j*14))
 
             cls_obj = PLAYER_CLASSES[key]; stats = cls_obj.BASE_STATS
             stat_data = [
@@ -269,7 +300,7 @@ def show_class_selection():
                 ("SPD", stats['speed'], (100,255,200), 8),
                 ("RATE", stats['fire_rate'], (100,200,255), 120),
             ]
-            sy_s = cy + 205
+            sy_s = cy + 145
             for j, (sn, sv, sc, mx_v) in enumerate(stat_data):
                 lb = small_font.render(sn, True, sc)
                 vl = small_font.render(str(sv), True, (170,180,195))
@@ -283,27 +314,26 @@ def show_class_selection():
 
             if hov:
                 sel = small_font.render("[ CLICK TO SELECT ]", True, nc)
-                surf.blit(sel, (cx+cw//2-sel.get_width()//2, cy+ch-20))
+                surf.blit(sel, (cx+cw//2-sel.get_width()//2, cy+ch-18))
 
-        # ── Wave skip selector
-        skip_y = sh//2 + ch//2 - 8
+        # ── Wave skip selector (always visible)
+        skip_y = sy + total_h + 8
         left_r = pygame.Rect(0,0,0,0)
         right_r = pygame.Rect(0,0,0,0)
-        if len(skip_options) > 1 and not waiting_for_players:
-            sel_col = (0,255,255)
-            # Container
-            cont_w = 340
-            cont_x = sw//2 - cont_w//2
-            cont_bg = pygame.Surface((cont_w, 36), pygame.SRCALPHA)
-            cont_bg.fill((0,255,255,8))
-            surf.blit(cont_bg, (cont_x, skip_y))
-            pygame.draw.rect(surf, (*sel_col, 40), (cont_x, skip_y, cont_w, 36), 1, border_radius=5)
+        sel_col = (0,255,255)
+        cont_w = 360
+        cont_x = sw//2 - cont_w//2
+        cont_bg = pygame.Surface((cont_w, 36), pygame.SRCALPHA)
+        cont_bg.fill((0,255,255,8))
+        surf.blit(cont_bg, (cont_x, skip_y))
+        pygame.draw.rect(surf, (*sel_col, 40), (cont_x, skip_y, cont_w, 36), 1, border_radius=5)
 
-            lbl = menu_font.render("Start Wave:", True, (120,130,150))
-            surf.blit(lbl, (cont_x + 12, skip_y + 7))
+        lbl = menu_font.render("Start Wave:", True, (120,130,150))
+        surf.blit(lbl, (cont_x + 12, skip_y + 7))
 
+        if len(skip_options) > 1:
             # Left arrow
-            left_r = pygame.Rect(cont_x + 160, skip_y + 4, 28, 28)
+            left_r = pygame.Rect(cont_x + 150, skip_y + 4, 28, 28)
             lhov = left_r.collidepoint(mx, my)
             pygame.draw.rect(surf, sel_col if lhov else (*sel_col, 60), left_r, 0 if lhov else 1, border_radius=4)
             lt = menu_font.render("<", True, (10,10,20) if lhov else sel_col)
@@ -312,19 +342,22 @@ def show_class_selection():
             # Wave number
             wave_str = str(skip_options[skip_index])
             wt = menu_font.render(wave_str, True, WHITE)
-            wt_x = cont_x + 200
-            surf.blit(wt, (wt_x, skip_y + 7))
+            surf.blit(wt, (cont_x + 194, skip_y + 7))
 
             # Right arrow
-            right_r = pygame.Rect(cont_x + 240, skip_y + 4, 28, 28)
+            right_r = pygame.Rect(cont_x + 230, skip_y + 4, 28, 28)
             rhov = right_r.collidepoint(mx, my)
             pygame.draw.rect(surf, sel_col if rhov else (*sel_col, 60), right_r, 0 if rhov else 1, border_radius=4)
             rt = menu_font.render(">", True, (10,10,20) if rhov else sel_col)
             surf.blit(rt, (right_r.centerx - rt.get_width()//2, right_r.centery - rt.get_height()//2))
+        else:
+            # Only wave 1 available
+            wt = menu_font.render("1", True, WHITE)
+            surf.blit(wt, (cont_x + 194, skip_y + 7))
 
-            # Best wave label
-            best_lbl = small_font.render(f"Best: Wave {highest}", True, (55,60,75))
-            surf.blit(best_lbl, (cont_x + cont_w + 10, skip_y + 9))
+        # Best wave label
+        best_lbl = small_font.render(f"Best: Wave {highest}", True, (55,60,75))
+        surf.blit(best_lbl, (cont_x + cont_w - best_lbl.get_width() - 10, skip_y + 9))
 
         hint = small_font.render("Pick a class to begin", True, (50,50,65))
         surf.blit(hint, (sw//2-hint.get_width()//2, sh-24))

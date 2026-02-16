@@ -27,11 +27,12 @@ from core.game_state import (
 )
 from game.helpers import (
     get_nearest_enemies, handle_enemy_death, apply_magnet,
-    apply_gold_magnet, get_perma_stats, add_gold
+    apply_gold_magnet, get_perma_stats, add_gold, hat_notifications
 )
 from ui.hud import draw_ui, draw_boss_health_bar, draw_wave_banner, draw_enemy_health_bars
 from ui.upgrade_menu import show_upgrade_menu
 from ui.menus import show_pause_menu, show_game_over
+from ui import vfx
 from entities.remote_ghosts import RemoteEnemyGhost, RemotePlayerGhost
 
 def run_game(class_key, starting_wave=1):
@@ -56,6 +57,7 @@ def run_game(class_key, starting_wave=1):
 
     # Groups
     all_sprites = pygame.sprite.Group()
+    vfx.clear()
     enemies_grp = pygame.sprite.Group()
     bullets_grp = pygame.sprite.Group()
     gems_grp = pygame.sprite.Group()
@@ -148,7 +150,7 @@ def run_game(class_key, starting_wave=1):
     enemies_to_spawn = 0
     enemies_spawned = 0
     spawn_timer = 0
-    SPAWN_DELAY = 30
+    BASE_SPAWN_DELAY = 30  # Starting spawn delay (frames)
     wave_active = False
     wave_cooldown = 0
     WAVE_COOLDOWN_TIME = 120
@@ -160,55 +162,6 @@ def run_game(class_key, starting_wave=1):
     party_xp = 0
     party_xp_to_next = 5
     upgrade_pending_players = set()  # Set of player IDs waiting to pick upgrades
-
-    def start_wave(wave_num):
-        nonlocal enemies_to_spawn, enemies_spawned, wave_active, spawn_timer, wave_banner_timer
-        base_count = 5 + (wave_num * 2)
-        # +10% enemies every 10 levels
-        scale = 1.0 + (wave_num // 10) * 0.10
-        enemies_to_spawn = int(base_count * scale)
-        enemies_spawned = 0
-        wave_active = True
-        spawn_timer = 0
-        wave_banner_timer = 120
-        if wave_num % 10 == 0:
-            sounds.play_boss_spawn()
-            trigger_shake(12, 8)
-        else:
-            sounds.play_wave_start()
-        boss = None
-        if wave_num % 10 == 0:
-            boss = create_boss_for_wave(player_obj, wave_num)
-            boss._net_id = id(boss)
-            boss.get_nearest_player_pos = make_nearest_player_finder(boss)  # Enable smart targeting
-            all_sprites.add(boss)
-            enemies_grp.add(boss)
-            # Broadcast boss spawn to clients
-            if gs.net_mode == "host" and gs.net_host:
-                gs.net_host.broadcast(MSG_ENEMY_SPAWN, {
-                    "enemy_id": boss._net_id,
-                    "x": boss.rect.x,
-                    "y": boss.rect.y,
-                    "is_boss": True,
-                    "wave": wave_num,
-                    "max_health": boss.max_health,
-                    "health": boss.health,
-                })
-        # Host broadcasts new wave to clients immediately
-        if gs.net_mode == "host" and gs.net_host:
-            gs.net_host.broadcast(MSG_WAVE_START, {
-                "wave": wave_num,
-                "active": True,
-                "enemies_remaining": enemies_to_spawn,
-            })
-
-    start_wave(current_wave)
-
-    # Dash trail visual: list of (pos, alpha, frame) tuples
-    dash_trail = []
-    # Spectate state (multiplayer only)
-    spectating = False
-    spectate_target_id = None
 
     # Helper function for enemies to find nearest player
     def make_nearest_player_finder(enemy):
@@ -244,6 +197,77 @@ def run_game(class_key, starting_wave=1):
             return (target_x, target_y)
 
         return find_nearest
+
+    def start_wave(wave_num):
+        nonlocal enemies_to_spawn, enemies_spawned, wave_active, spawn_timer, wave_banner_timer
+        base_count = 5 + (wave_num * 3)
+        # +15% enemies every 10 levels
+        scale = 1.0 + (wave_num // 10) * 0.15
+        enemies_to_spawn = int(base_count * scale)
+        enemies_spawned = 0
+        wave_active = True
+        spawn_timer = 0
+        wave_banner_timer = 120
+        trigger_shake(8, 5)
+        vfx.wave_start_effect(settings_module.SCREEN_WIDTH, settings_module.SCREEN_HEIGHT)
+        if wave_num % 10 == 0:
+            sounds.play_boss_spawn()
+            trigger_shake(12, 8)
+        else:
+            sounds.play_wave_start()
+        boss = None
+        if wave_num % 10 == 0:
+            boss = create_boss_for_wave(player_obj, wave_num)
+            boss._net_id = id(boss)
+            boss.get_nearest_player_pos = make_nearest_player_finder(boss)  # Enable smart targeting
+            all_sprites.add(boss)
+            enemies_grp.add(boss)
+            # Broadcast boss spawn to clients
+            if gs.net_mode == "host" and gs.net_host:
+                gs.net_host.broadcast(MSG_ENEMY_SPAWN, {
+                    "enemy_id": boss._net_id,
+                    "x": boss.rect.x,
+                    "y": boss.rect.y,
+                    "is_boss": True,
+                    "wave": wave_num,
+                    "max_health": boss.max_health,
+                    "health": boss.health,
+                })
+        # Host broadcasts new wave to clients immediately
+        if gs.net_mode == "host" and gs.net_host:
+            gs.net_host.broadcast(MSG_WAVE_START, {
+                "wave": wave_num,
+                "active": True,
+                "enemies_remaining": enemies_to_spawn,
+            })
+
+    # ── Auto-level for wave skip: give player upgrades matching the wave
+    if starting_wave > 1:
+        auto_levels = starting_wave  # ~1 level per wave
+        for lv in range(auto_levels):
+            player_obj.level += 1
+            player_obj.current_xp = 0
+            player_obj.xp_to_next_level = int(5 + player_obj.level ** 1.4 * 2)
+            # Every 5th level = big upgrade, otherwise normal
+            if (lv + 1) % 5 == 0:
+                pick = random.choice(BIG_UPGRADE_POOL)
+            else:
+                pick = random.choice(UPGRADE_POOL)
+            player_obj.apply_upgrade(pick["key"])
+        # Heal to full after auto-leveling
+        player_obj.current_health = player_obj.stats["max_health"]
+
+    start_wave(current_wave)
+
+    # Dash trail visual: list of (pos, alpha, frame) tuples
+    dash_trail = []
+    # Spectate state (multiplayer only)
+    spectating = False
+    spectate_target_id = None
+
+    # Beam weapon state (Arcanist)
+    active_beam = None  # {"start": (x,y), "end": (x,y), "timer": int, "width": float, "dmg": int}
+    beam_hit_this_frame = set()  # Track enemies already hit by beam this frame
 
     while True:
         sw = settings_module.SCREEN_WIDTH
@@ -292,7 +316,9 @@ def run_game(class_key, starting_wave=1):
                 if wave_active:
                     if enemies_spawned < enemies_to_spawn:
                         spawn_timer += 1
-                        if spawn_timer >= SPAWN_DELAY:
+                        # Spawn faster at higher waves
+                        spawn_delay = max(4, int(BASE_SPAWN_DELAY - current_wave * 0.3))
+                        if spawn_timer >= spawn_delay:
                             spawn_timer = 0
 
                             # Choose enemy type based on wave number
@@ -734,14 +760,21 @@ def run_game(class_key, starting_wave=1):
                             trigger_shake(6, 4)
                             mine.kill()
 
-            # Detect dash start for sound + trail seed
+            # Detect dash start for sound + ZAP effect
             if not spectating and player_obj.dash_duration == player_obj.dash_duration_max:
                 if not getattr(player_obj, '_dash_sound_played', False):
                     sounds.play_dash()
-                    trigger_shake(3, 3)
-                    dash_trail.append([player_obj.rect.center, 200, 8])
+                    trigger_shake(5, 4)
+                    player_obj._dash_start_pos = player_obj.rect.center
                     player_obj._dash_sound_played = True
             elif player_obj.dash_duration == 0:
+                if getattr(player_obj, '_dash_sound_played', False):
+                    # Dash just ended — fire the zap!
+                    start_pos = getattr(player_obj, '_dash_start_pos', None)
+                    if start_pos:
+                        nc = player_obj.NEON_GLOW_COLOR if hasattr(player_obj, 'NEON_GLOW_COLOR') else (100,200,255)
+                        vfx.dash_zap(start_pos, player_obj.rect.center, nc)
+                        trigger_shake(6, 5)
                 player_obj._dash_sound_played = False
 
             apply_magnet(player_obj, gems_grp)
@@ -788,7 +821,77 @@ def run_game(class_key, starting_wave=1):
                         target_y = player_obj.rect.centery + math.sin(bullet_angle) * spread_distance
 
                         bsize = player_obj.stats.get("bullet_size", 1.0)
-                        if weapon == "laser":
+                        if weapon == "beam":
+                            # Arcanist beam — instant line from player to screen edge
+                            beam_len = max(sw, sh) * 1.5
+                            end_x = player_obj.rect.centerx + math.cos(bullet_angle) * beam_len
+                            end_y = player_obj.rect.centery + math.sin(bullet_angle) * beam_len
+                            beam_w = int(12 * bsize)
+                            active_beam = {
+                                "start": player_obj.rect.center,
+                                "end": (int(end_x), int(end_y)),
+                                "timer": 15,  # frames the beam stays visible
+                                "width": beam_w,
+                                "dmg": player_obj.stats["damage"],
+                                "angle": bullet_angle,
+                            }
+                            beam_hit_this_frame = set()
+                            # Damage all enemies along the beam line NOW
+                            for enemy in list(enemies_grp):
+                                if isinstance(enemy, PhaseWraith) and enemy.phased_out:
+                                    continue
+                                ex, ey = enemy.rect.centerx, enemy.rect.centery
+                                px_r = ex - player_obj.rect.centerx
+                                py_r = ey - player_obj.rect.centery
+                                bx_n = math.cos(bullet_angle)
+                                by_n = math.sin(bullet_angle)
+                                proj = px_r * bx_n + py_r * by_n
+                                if proj > 0:
+                                    perp = abs(px_r * by_n - py_r * bx_n)
+                                    if perp < beam_w + enemy.rect.width // 2:
+                                        dmg = player_obj.stats["damage"]
+                                        is_crit = False
+                                        if hasattr(player_obj, 'crit_chance') and player_obj.crit_chance > 0:
+                                            if random.random() < player_obj.crit_chance:
+                                                dmg = int(dmg * 2); is_crit = True
+                                        dead = enemy.take_damage(dmg)
+                                        vfx.hit_spark(enemy.rect.centerx, enemy.rect.centery, (255, 120, 120))
+                                        vfx.damage_number(enemy.rect.centerx, enemy.rect.top, dmg, is_crit)
+                                        if dead:
+                                            sounds.play_hit()
+                                            trigger_shake(6, 5)
+                                            ec = getattr(enemy, 'color', (255, 80, 80))
+                                            if getattr(enemy, 'is_boss', False):
+                                                vfx.boss_death_burst(enemy.rect.centerx, enemy.rect.centery, ec)
+                                                trigger_shake(15, 12)
+                                            else:
+                                                vfx.enemy_death_burst(enemy.rect.centerx, enemy.rect.centery, ec)
+                                            if isinstance(enemy, SplitterEnemy) and enemy.size == 'large':
+                                                for _ in range(2):
+                                                    mini = SplitterEnemy(player_obj, current_wave, 'medium')
+                                                    mini.rect.center = enemy.rect.center
+                                                    mini.get_nearest_player_pos = make_nearest_player_finder(mini)
+                                                    all_sprites.add(mini); enemies_grp.add(mini)
+                                            elif isinstance(enemy, SplitterEnemy) and enemy.size == 'medium':
+                                                for _ in range(2):
+                                                    tiny = SplitterEnemy(player_obj, current_wave, 'small')
+                                                    tiny.rect.center = enemy.rect.center
+                                                    tiny.get_nearest_player_pos = make_nearest_player_finder(tiny)
+                                                    all_sprites.add(tiny); enemies_grp.add(tiny)
+                                            if isinstance(enemy, HydraBoss) and getattr(enemy, 'is_hydra_parent', False):
+                                                for _ in range(2):
+                                                    hm = HydraMini(player_obj, current_wave, enemy.rect.center)
+                                                    hm._net_id = id(hm)
+                                                    hm.get_nearest_player_pos = make_nearest_player_finder(hm)
+                                                    all_sprites.add(hm); enemies_grp.add(hm)
+                                            if gs.net_mode == "client" and gs.net_client:
+                                                gs.net_client.send(MSG_ENEMY_DEAD, {"enemy_id": getattr(enemy, '_net_id', -1)})
+                                            elif gs.net_mode == "host" and gs.net_host:
+                                                gs.net_host.broadcast(MSG_ENEMY_DEAD, {"enemy_id": getattr(enemy, '_net_id', -1)})
+                                            handle_enemy_death(enemy, all_sprites, gems_grp, health_orbs_grp, gs.net_mode, gs.net_host, gold_grp)
+                            # Only fire 1 beam regardless of multishot (multishot = width bonus)
+                            break
+                        elif weapon == "laser":
                             b = LaserBeam(player_obj.rect.center, (target_x, target_y),
                                           player_obj.stats["bullet_speed"], player_obj.stats["piercing"],
                                           size=bsize)
@@ -796,11 +899,12 @@ def run_game(class_key, starting_wave=1):
                             b = Bullet(player_obj.rect.center, (target_x, target_y),
                                        player_obj.stats["bullet_speed"], player_obj.stats["piercing"],
                                        size=bsize, bounces=_bullet_bounces)
-                        all_sprites.add(b)
-                        bullets_grp.add(b)
+                        if weapon != "beam":
+                            all_sprites.add(b)
+                            bullets_grp.add(b)
 
                         # Broadcast bullet to all other players
-                        if gs.net_mode in ("host", "client"):
+                        if weapon != "beam" and gs.net_mode in ("host", "client"):
                             bullet_data = {
                                 "weapon": weapon,
                                 "bx": player_obj.rect.centerx,
@@ -860,9 +964,19 @@ def run_game(class_key, starting_wave=1):
                                 is_crit = True
                     dead = enemy.take_damage(dmg)
                     bullet.hits += 1
+                    # VFX: hit spark + damage number
+                    vfx.hit_spark(enemy.rect.centerx, enemy.rect.centery)
+                    vfx.damage_number(enemy.rect.centerx, enemy.rect.top, dmg, is_crit)
                     if dead:
                         sounds.play_hit()
-                        trigger_shake(4, 4)
+                        trigger_shake(6, 5)
+                        # VFX: death burst
+                        ec = getattr(enemy, 'color', (255, 80, 80))
+                        if isinstance(enemy, Boss) or getattr(enemy, 'is_boss', False):
+                            vfx.boss_death_burst(enemy.rect.centerx, enemy.rect.centery, ec)
+                            trigger_shake(15, 12)
+                        else:
+                            vfx.enemy_death_burst(enemy.rect.centerx, enemy.rect.centery, ec)
 
                         # Splitter enemy splits into smaller enemies
                         if isinstance(enemy, SplitterEnemy) and enemy.size == 'large':
@@ -924,7 +1038,9 @@ def run_game(class_key, starting_wave=1):
                         proj_dmg = max(1, int(proj_dmg * (1.0 - player_obj.armor)))
                     player_obj.current_health -= proj_dmg
                     sounds.play_hurt()
-                    trigger_shake(6, 3)
+                    trigger_shake(8, 5)
+                    vfx.player_hit_burst(player_obj.rect.centerx, player_obj.rect.centery)
+                    vfx.damage_number(player_obj.rect.centerx, player_obj.rect.top, proj_dmg)
                     if player_obj.current_health <= 0:
                         # Check for revival
                         if revivals_remaining > 0:
@@ -966,7 +1082,11 @@ def run_game(class_key, starting_wave=1):
                 ram_hits = pygame.sprite.spritecollide(player_obj, enemies_grp, False)
                 for enemy in ram_hits:
                     dead = player_obj.ram_enemy(enemy)
+                    vfx.hit_spark(enemy.rect.centerx, enemy.rect.centery, (100, 150, 255), count=6)
                     if dead:
+                        ec = getattr(enemy, 'color', (255, 80, 80))
+                        vfx.enemy_death_burst(enemy.rect.centerx, enemy.rect.centery, ec)
+                        trigger_shake(6, 5)
                         if gs.net_mode == "client" and gs.net_client:
                             gs.net_client.send(MSG_ENEMY_DEAD, {"enemy_id": getattr(enemy, '_net_id', -1)})
                         elif gs.net_mode == "host" and gs.net_host:
@@ -977,6 +1097,7 @@ def run_game(class_key, starting_wave=1):
             gem_hits = pygame.sprite.spritecollide(player_obj, gems_grp, True)
             for gem in gem_hits:
                 sounds.play_gem()
+                vfx.gem_sparkle(gem.rect.centerx, gem.rect.centery)
                 if gs.net_mode in ("host", "client"):
                     # Multiplayer: report gem to host for party XP
                     if gs.net_mode == "host":
@@ -985,7 +1106,7 @@ def run_game(class_key, starting_wave=1):
                         if party_xp >= party_xp_to_next:
                             party_level += 1
                             party_xp = 0
-                            party_xp_to_next = int(party_xp_to_next * 1.5)
+                            party_xp_to_next = int(5 + party_level ** 1.4 * 2)
                             is_big = party_level % 5 == 0
                             # Reset pending players set (host + all connected clients)
                             upgrade_pending_players = {0}  # Host is player 0
@@ -1020,8 +1141,10 @@ def run_game(class_key, starting_wave=1):
                     if player_obj.current_xp >= player_obj.xp_to_next_level:
                         player_obj.level += 1
                         player_obj.current_xp = 0
-                        player_obj.xp_to_next_level = int(player_obj.xp_to_next_level * 1.5)
+                        player_obj.xp_to_next_level = int(5 + player_obj.level ** 1.4 * 2)
                         sounds.play_level_up()
+                        vfx.level_up_burst(player_obj.rect.centerx, player_obj.rect.centery)
+                        trigger_shake(8, 6)
                         if player_obj.level % 5 == 0:
                             show_upgrade_menu(True, player_obj, all_sprites, enemies_grp, gs.net_mode, gs.net_host,
                                               gs.net_client)
@@ -1034,7 +1157,14 @@ def run_game(class_key, starting_wave=1):
             for coin in coin_hits:
                 gold_this_run += coin.value
                 add_gold(coin.value)
-                sounds.play_gem()  # Reuse gem sound for now
+                sounds.play_gem()
+                vfx.gold_sparkle(coin.rect.centerx, coin.rect.centery)
+                # In MP: notify host/broadcast gold
+                if gs.net_mode == "client" and gs.net_client:
+                    gs.net_client.send("gold_pickup", {"value": coin.value})
+                elif gs.net_mode == "host" and gs.net_host:
+                    # Sync gold to clients
+                    gs.net_host.broadcast("gold_sync", {"gold": settings_module.config.get("gold", 0)})
 
             # Roomba AI + gem collection
             for roomba in roombas_grp:
@@ -1049,7 +1179,7 @@ def run_game(class_key, starting_wave=1):
                             if party_xp >= party_xp_to_next:
                                 party_level += 1
                                 party_xp = 0
-                                party_xp_to_next = int(party_xp_to_next * 1.5)
+                                party_xp_to_next = int(5 + party_level ** 1.4 * 2)
                                 is_big = party_level % 5 == 0
                                 upgrade_pending_players = {0}
                                 upgrade_pending_players.update(gs.net_host.get_remote_states().keys())
@@ -1072,7 +1202,7 @@ def run_game(class_key, starting_wave=1):
                         if player_obj.current_xp >= player_obj.xp_to_next_level:
                             player_obj.level += 1
                             player_obj.current_xp = 0
-                            player_obj.xp_to_next_level = int(player_obj.xp_to_next_level * 1.5)
+                            player_obj.xp_to_next_level = int(5 + player_obj.level ** 1.4 * 2)
                             sounds.play_level_up()
                             is_big = player_obj.level % 5 == 0
                             show_upgrade_menu(is_big, player_obj, all_sprites, enemies_grp, gs.net_mode, gs.net_host, gs.net_client)
@@ -1095,9 +1225,12 @@ def run_game(class_key, starting_wave=1):
                     if saw.rect.colliderect(enemy.rect) and saw.can_hit_enemy(enemy):
                         saw.hit_enemy(enemy)
                         dead = enemy.take_damage(saw.damage)
+                        vfx.hit_spark(enemy.rect.centerx, enemy.rect.centery, (255,200,100))
                         if dead:
                             sounds.play_hit()
-                            trigger_shake(3, 3)
+                            trigger_shake(5, 4)
+                            ec = getattr(enemy, 'color', (255, 80, 80))
+                            vfx.enemy_death_burst(enemy.rect.centerx, enemy.rect.centery, ec)
                             if isinstance(enemy, SplitterEnemy) and enemy.size == 'large':
                                 for _ in range(2):
                                     mini = SplitterEnemy(player_obj, current_wave, 'medium')
@@ -1162,7 +1295,10 @@ def run_game(class_key, starting_wave=1):
                         player_obj.last_hit = now
                         player_obj.set_hurt(True)
                         sounds.play_hurt()
-                        trigger_shake(8, 6)
+                        trigger_shake(14, 10)
+                        vfx.player_hit_burst(player_obj.rect.centerx, player_obj.rect.centery)
+                        vfx.hit_spark(player_obj.rect.centerx, player_obj.rect.centery, (255, 50, 50), count=8)
+                        vfx.damage_number(player_obj.rect.centerx, player_obj.rect.top, worst_damage)
                         # Thorns: damage enemies that hit us
                         if _thorns_damage > 0:
                             for e in hit_enemies:
@@ -1291,25 +1427,78 @@ def run_game(class_key, starting_wave=1):
         if not spectating and hasattr(player_obj, 'draw_ram_aura'):
             player_obj.draw_ram_aura(shake_surf)
 
-        # Dash trail
-        if player_obj.dash_duration > 0 or dash_trail:
-            dash_trail.append([player_obj.rect.center, 220, 8])
+        # Dash blink — player flickers invisible, electric afterimages
+        if player_obj.dash_duration > 0:
+            nc = player_obj.NEON_GLOW_COLOR if hasattr(player_obj, 'NEON_GLOW_COLOR') else (100,200,255)
+            dash_trail.append([player_obj.rect.center, 255, 10])
+            # Spawn electric sparks along path
+            if random.random() < 0.6:
+                vfx.bullet_trail(player_obj.rect.centerx + random.randint(-10,10),
+                                 player_obj.rect.centery + random.randint(-10,10), nc, 3)
         new_trail = []
         for trail_entry in dash_trail:
             pos, alpha, radius = trail_entry
             if alpha > 0:
-                ts = pygame.Surface((radius * 2 + 4, radius * 2 + 4), pygame.SRCALPHA)
-                # Outer glow
-                pygame.draw.circle(ts, (0, 200, 255, alpha // 3), (radius + 2, radius + 2), radius + 2)
-                # Inner bright
-                pygame.draw.circle(ts, (100, 220, 255, alpha), (radius + 2, radius + 2), radius)
-                shake_surf.blit(ts, (pos[0] - radius - 2, pos[1] - radius - 2))
-                trail_entry[1] = max(0, alpha - 30)
+                ts = pygame.Surface((radius*2+4, radius*2+4), pygame.SRCALPHA)
+                nc = player_obj.NEON_GLOW_COLOR if hasattr(player_obj, 'NEON_GLOW_COLOR') else (100,200,255)
+                # Ghostly afterimage
+                pygame.draw.circle(ts, (*nc, alpha//3), (radius+2, radius+2), radius+1)
+                pygame.draw.circle(ts, (255,255,255, alpha//5), (radius+2, radius+2), max(1, radius//2))
+                shake_surf.blit(ts, (pos[0]-radius-2, pos[1]-radius-2))
+                trail_entry[1] = max(0, alpha - 40)
                 trail_entry[2] = max(1, radius - 1)
                 new_trail.append(trail_entry)
         dash_trail[:] = new_trail
 
-        all_sprites.draw(shake_surf)
+        # Draw sprites — player flickers during dash for "blink" effect
+        if player_obj.dash_duration > 0 and pygame.time.get_ticks() % 60 < 30:
+            # Hide player during dash (blink effect) — draw all except player
+            for s in all_sprites:
+                if s is not player_obj:
+                    shake_surf.blit(s.image, s.rect)
+        else:
+            all_sprites.draw(shake_surf)
+
+        # ── VFX layer (particles, flashes, zap bolts, damage numbers)
+        vfx.spawn_ambient(sw, sh)
+        vfx.tick_and_draw(shake_surf)
+
+        # Draw player hat
+        if not spectating and hasattr(player_obj, 'draw_hat'):
+            player_obj.draw_hat(shake_surf)
+
+        # Paladin heal aura
+        if not spectating and hasattr(player_obj, 'draw_heal_aura'):
+            player_obj.draw_heal_aura(shake_surf)
+            # MP: heal nearby allies
+            if gs.net_mode and gs.remote_players:
+                from entities.player_paladin import PlayerPaladin
+                if isinstance(player_obj, PlayerPaladin):
+                    for ghost in gs.remote_players.values():
+                        dist_h = math.hypot(ghost.rect.centerx - player_obj.rect.centerx,
+                                            ghost.rect.centery - player_obj.rect.centery)
+                        if dist_h < player_obj.HEAL_RADIUS:
+                            pass  # Would need net msg to actually heal — visual only for now
+
+        # Draw active beam (Arcanist)
+        if active_beam and active_beam["timer"] > 0:
+            bs = pygame.Surface((sw, sh), pygame.SRCALPHA)
+            t_ratio = active_beam["timer"] / 15.0
+            bw = int(active_beam["width"] * t_ratio)
+            ba = int(200 * t_ratio)
+            # Outer glow
+            pygame.draw.line(bs, (255, 80, 80, int(ba * 0.3)),
+                             active_beam["start"], active_beam["end"], bw + 12)
+            pygame.draw.line(bs, (255, 120, 120, int(ba * 0.6)),
+                             active_beam["start"], active_beam["end"], bw + 4)
+            # Core
+            pygame.draw.line(bs, (255, 200, 200, ba),
+                             active_beam["start"], active_beam["end"], max(2, bw))
+            # Bright center
+            pygame.draw.line(bs, (255, 255, 255, int(ba * 0.8)),
+                             active_beam["start"], active_beam["end"], max(1, bw // 2))
+            shake_surf.blit(bs, (0, 0))
+            active_beam["timer"] -= 1
         draw_enemy_health_bars(shake_surf, enemies_grp)
 
         # ── Draw laser beams and charge indicators
@@ -1411,9 +1600,12 @@ def run_game(class_key, starting_wave=1):
                     "x": player_obj.rect.x,
                     "y": player_obj.rect.y,
                     "health": player_obj.current_health,
+                    "max_health": player_obj.stats["max_health"],
                     "class": player_obj.CLASS_KEY,
                     "level": player_obj.level,
                     "username": gs.local_username,
+                    "equipped_hat": player_obj.equipped_hat,
+                    "is_dead": spectating,
                 })
 
             # Broadcast enemy positions every 5 frames (15fps sync)
@@ -1432,6 +1624,16 @@ def run_game(class_key, starting_wave=1):
                     })
                 if enemy_states:
                     gs.net_host.broadcast(MSG_ENEMY_UPDATE, {"enemies": enemy_states})
+
+                # Broadcast helper (roomba/saw) positions
+                helper_states = []
+                for r in roombas_grp:
+                    helper_states.append({"type": "roomba", "x": r.rect.centerx, "y": r.rect.centery})
+                for s in saws_grp:
+                    helper_states.append({"type": "saw", "x": s.rect.centerx, "y": s.rect.centery,
+                                          "radius": getattr(s, 'orbit_radius', 50)})
+                if helper_states:
+                    gs.net_host.broadcast("helper_state", {"pid": 0, "helpers": helper_states})
             run_game._enemy_timer = enemy_timer
 
             for msg in gs.net_host.get_messages():
@@ -1467,13 +1669,27 @@ def run_game(class_key, starting_wave=1):
                             gs.net_host.broadcast(MSG_ENEMY_DEAD, {"enemy_id": eid})
                             break
 
+                elif msg_type == "gold_pickup":
+                    # Client picked up gold — add to shared gold pool
+                    gval = data.get("value", 0)
+                    if gval > 0:
+                        gold_this_run += gval
+                        add_gold(gval)
+                        # Sync back to all clients
+                        gs.net_host.broadcast("gold_sync", {"gold": settings_module.config.get("gold", 0)})
+
+                elif msg_type == "helper_state":
+                    # Client sent their helper positions — store and rebroadcast
+                    gs.remote_helpers[from_id] = data.get("helpers", [])
+                    gs.net_host.broadcast("helper_state", {"pid": from_id, "helpers": data.get("helpers", [])})
+
                 elif msg_type == MSG_GEM_COLLECT:
                     # Client picked up a gem — add to party XP
                     party_xp += 1
                     if party_xp >= party_xp_to_next:
                         party_level += 1
                         party_xp = 0
-                        party_xp_to_next = int(party_xp_to_next * 1.5)
+                        party_xp_to_next = int(5 + party_level ** 1.4 * 2)
                         is_big = party_level % 5 == 0
                         # Reset pending players (host + all clients)
                         upgrade_pending_players = {0}
@@ -1538,8 +1754,18 @@ def run_game(class_key, starting_wave=1):
                 gs.net_client.send_player_state(
                     player_obj.rect.x, player_obj.rect.y,
                     player_obj.current_health, player_obj.CLASS_KEY,
-                    player_obj.level
+                    player_obj.level, player_obj.stats["max_health"],
+                    player_obj.equipped_hat, spectating
                 )
+                # Also send helper positions
+                helper_states = []
+                for r in roombas_grp:
+                    helper_states.append({"type": "roomba", "x": r.rect.centerx, "y": r.rect.centery})
+                for s in saws_grp:
+                    helper_states.append({"type": "saw", "x": s.rect.centerx, "y": s.rect.centery,
+                                          "radius": getattr(s, 'orbit_radius', 50)})
+                if helper_states:
+                    gs.net_client.send("helper_state", {"helpers": helper_states})
 
             for msg in gs.net_client.get_messages():
                 msg_type = msg.get("type", "")
@@ -1626,12 +1852,46 @@ def run_game(class_key, starting_wave=1):
                     all_sprites.add(orb)
                     health_orbs_grp.add(orb)
 
+                elif msg_type == "gold_spawn":
+                    # Host spawned gold coin — create locally
+                    gx = data.get("x", 0)
+                    gy = data.get("y", 0)
+                    gv = data.get("value", 1)
+                    coin = GoldCoin((gx, gy), gv)
+                    all_sprites.add(coin)
+                    gold_grp.add(coin)
+
+                elif msg_type == "gold_sync":
+                    # Host syncs total gold to client
+                    synced_gold = data.get("gold", 0)
+                    settings_module.config["gold"] = synced_gold
+                    from core.settings import save_config
+                    save_config(settings_module.config)
+
+                elif msg_type == "hat_drop":
+                    # Host says a hat dropped — add to our collection too
+                    hat_id = data.get("hat_id")
+                    hat_name = data.get("name", "???")
+                    hat_rarity = data.get("rarity", "common")
+                    collected = settings_module.config.get("collected_hats", [])
+                    if hat_id and hat_id not in collected:
+                        collected.append(hat_id)
+                        settings_module.config["collected_hats"] = collected
+                        from core.settings import save_config
+                        save_config(settings_module.config)
+                    hat_notifications.append({"name": hat_name, "rarity": hat_rarity, "timer": 300})
+
+                elif msg_type == "helper_state":
+                    # Remote player's helper positions
+                    pid = data.get("pid", -1)
+                    gs.remote_helpers[pid] = data.get("helpers", [])
+
                 elif msg_type == MSG_PARTY_LEVEL_UP:
                     # Party leveled up — open upgrade menu
                     # Update party XP variables (nonlocal to update run_game scope)
                     party_level = data.get("level", 1)
                     party_xp = 0  # Reset after level up
-                    party_xp_to_next = int(party_xp_to_next * 1.5)  # Increase threshold
+                    party_xp_to_next = int(5 + party_level ** 1.4 * 2)  # Increase threshold
                     is_big = data.get("is_big", False)
                     sounds.play_level_up()
                     show_upgrade_menu(is_big, player_obj, all_sprites, enemies_grp, gs.net_mode, gs.net_host, gs.net_client)
@@ -1697,8 +1957,38 @@ def run_game(class_key, starting_wave=1):
 
         # ========== DRAW REMOTE PLAYERS ==========
         for pid, ghost in gs.remote_players.items():
+            if getattr(ghost, 'is_dead', False):
+                continue  # Don't draw dead players
             surf.blit(ghost.image, ghost.rect)
             ghost.draw_label(surf)
+            if hasattr(ghost, 'draw_hat'):
+                ghost.draw_hat(surf)
+            if hasattr(ghost, 'draw_health_bar'):
+                ghost.draw_health_bar(surf)
+
+        # ========== DRAW REMOTE HELPERS (roombas/saws) ==========
+        for pid, helpers in gs.remote_helpers.items():
+            ghost = gs.remote_players.get(pid)
+            ghost_color = (57, 255, 20)  # Default green
+            if ghost and hasattr(ghost, 'class_key'):
+                from entities.remote_ghosts import _SPRITE_MAP
+                _, _, _, glow = _SPRITE_MAP.get(ghost.class_key, _SPRITE_MAP["default"])
+                ghost_color = glow
+            for h in helpers:
+                hx, hy = h.get("x", 0), h.get("y", 0)
+                if h.get("type") == "roomba":
+                    # Small orbiting circle
+                    hs = pygame.Surface((18, 18), pygame.SRCALPHA)
+                    pygame.draw.circle(hs, (*ghost_color, 140), (9, 9), 8)
+                    pygame.draw.circle(hs, (255, 255, 255, 80), (9, 9), 4)
+                    surf.blit(hs, (hx - 9, hy - 9))
+                elif h.get("type") == "saw":
+                    # Spinning saw
+                    sr = 12
+                    hs2 = pygame.Surface((sr*2+4, sr*2+4), pygame.SRCALPHA)
+                    pygame.draw.circle(hs2, (*ghost_color, 120), (sr+2, sr+2), sr, 2)
+                    pygame.draw.circle(hs2, (255, 255, 255, 100), (sr+2, sr+2), sr//2)
+                    surf.blit(hs2, (hx - sr - 2, hy - sr - 2))
 
         # ========== UPGRADE PAUSE OVERLAY ==========
         if gs.upgrade_paused_by and not spectating:
@@ -1792,6 +2082,27 @@ def run_game(class_key, starting_wave=1):
         if wave_banner_timer > 0:
             draw_wave_banner(surf, current_wave)
             wave_banner_timer -= 1
+
+        # Hat drop notifications
+        from core.settings import RARITY_COLORS
+        ny = sh - 80
+        for notif in hat_notifications[:]:
+            if notif["timer"] <= 0:
+                hat_notifications.remove(notif); continue
+            notif["timer"] -= 1
+            alpha = min(255, notif["timer"] * 3)
+            rc = RARITY_COLORS.get(notif["rarity"], (180,180,190))
+            # Background
+            nbs = pygame.Surface((300, 32), pygame.SRCALPHA)
+            nbs.fill((*rc[:3], int(alpha * 0.15)))
+            pygame.draw.rect(nbs, (*rc[:3], int(alpha * 0.5)), (0,0,300,32), 2, border_radius=6)
+            surf.blit(nbs, (sw//2 - 150, ny))
+            # Text
+            ht = small_font.render(f"NEW HAT: {notif['name']}", True, (*rc[:3],))
+            rt = small_font.render(f"[{notif['rarity'].upper()}]", True, (*rc[:3],))
+            surf.blit(ht, (sw//2 - ht.get_width()//2, ny + 2))
+            surf.blit(rt, (sw//2 - rt.get_width()//2, ny + 16))
+            ny -= 38
 
         # ========== DRAW NETWORK INFO ==========
         if gs.net_mode:

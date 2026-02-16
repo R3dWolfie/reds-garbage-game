@@ -8,6 +8,44 @@ from core.settings import *
 from entities.objects import ExpGem, HealthOrb, GoldCoin
 from core.game_state import MSG_GEM_SPAWN, MSG_ORB_SPAWN
 
+# Hat drop notifications (list of {"name", "rarity", "timer"} dicts)
+hat_notifications = []
+
+
+def _try_hat_drop(enemy_obj, net_mode=None, net_host=None):
+    """Roll for hat drop from killed enemy."""
+    from core.settings import HAT_DEFS, HAT_DROP_CHANCES, HAT_BOSS_DROP_CHANCES, save_config
+    is_boss = getattr(enemy_obj, 'is_boss', False)
+    wave = getattr(enemy_obj, 'wave', 0)
+    collected = settings_module.config.get("collected_hats", [])
+    chances = HAT_BOSS_DROP_CHANCES if is_boss else HAT_DROP_CHANCES
+
+    for hat in HAT_DEFS:
+        if hat["id"] == "none":
+            continue
+        if hat["id"] in collected:
+            continue  # Already own this hat
+        # Source check
+        src = hat.get("source", "any")
+        if src.startswith("boss_"):
+            req_wave = int(src.split("_")[1])
+            if not is_boss or wave != req_wave:
+                continue
+        elif src == "boss" and not is_boss:
+            continue
+        # Roll
+        chance = chances.get(hat["rarity"], 0)
+        if chance > 0 and random.random() < chance:
+            # Drop!
+            collected.append(hat["id"])
+            settings_module.config["collected_hats"] = collected
+            save_config(settings_module.config)
+            hat_notifications.append({"name": hat["name"], "rarity": hat["rarity"], "timer": 300})
+            # Broadcast hat drop to all players
+            if net_mode == "host" and net_host:
+                net_host.broadcast("hat_drop", {"hat_id": hat["id"], "name": hat["name"], "rarity": hat["rarity"]})
+            return  # Only one hat per kill
+
 
 def get_nearest_enemies(player_obj, enemy_group, count):
     enemy_list = []
@@ -67,12 +105,23 @@ def handle_enemy_death(enemy_obj, all_spr, gem_grp, orb_grp, net_mode=None, net_
             all_spr.add(coin)
             gold_grp.add(coin)
 
+            # Broadcast gold coin to clients
+            if net_mode == "host" and net_host:
+                net_host.broadcast("gold_spawn", {
+                    "x": coin.rect.centerx,
+                    "y": coin.rect.centery,
+                    "value": value,
+                })
+
         # Lucky drops: extra XP gems
         if lucky_bonus > 0 and random.random() < lucky_bonus:
             bonus_gem = ExpGem((enemy_obj.rect.centerx + random.randint(-15, 15),
                                 enemy_obj.rect.centery + random.randint(-15, 15)))
             all_spr.add(bonus_gem)
             gem_grp.add(bonus_gem)
+
+    # Hat drops
+    _try_hat_drop(enemy_obj, net_mode, net_host)
 
 
 def apply_magnet(player_obj, gem_grp):

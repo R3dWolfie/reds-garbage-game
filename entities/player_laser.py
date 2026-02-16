@@ -6,7 +6,7 @@ from entities.player_base import PlayerBase
 
 
 class PlayerLaser(PlayerBase):
-    """The Arcanist - fires slow but devastating laser beams that pierce all enemies."""
+    """The Arcanist - fires a devastating beam from player to screen edge."""
 
     CLASS_KEY = "laser"
     DISPLAY_NAME = "Arcanist"
@@ -17,17 +17,17 @@ class PlayerLaser(PlayerBase):
 
     BASE_STATS = {
         "speed": 4,
-        "fire_rate": 120,       # Very slow fire rate
-        "bullet_speed": 4,      # Slow beams
+        "fire_rate": 80,        # Slow fire rate
+        "bullet_speed": 4,      # Not used for beam but kept for compat
         "max_health": 80,       # Fragile
-        "multishot": 1,
-        "damage": 5,            # High damage
+        "multishot": 1,         # Number of beams
+        "damage": 3,            # Damage per tick (beam hits multiple times)
         "piercing": 999,        # Infinite pierce
         "magnet": 0,
-        "bullet_size": 1,
+        "bullet_size": 1,       # Beam width multiplier
         "xp_gain": 1.0,
         "accuracy": 1.0,
     }
 
     def get_weapon_type(self):
-        return "laser"
+        return "beam"

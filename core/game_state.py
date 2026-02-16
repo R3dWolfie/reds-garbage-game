@@ -11,6 +11,9 @@ from core.settings import *
 from entities.player_default import PlayerDefault
 from entities.player_tank import PlayerTank
 from entities.player_laser import PlayerLaser
+from entities.player_gunner import PlayerGunner
+from entities.player_sniper import PlayerSniper
+from entities.player_paladin import PlayerPaladin
 from updater.version import GAME_NAME, VERSION
 from core.sound_manager import SoundManager
 from networking.net_common import *
@@ -33,6 +36,9 @@ PLAYER_CLASSES = {
     "default": PlayerDefault,
     "tank": PlayerTank,
     "laser": PlayerLaser,
+    "gunner": PlayerGunner,
+    "sniper": PlayerSniper,
+    "paladin": PlayerPaladin,
 }
 
 
@@ -152,6 +158,7 @@ class _GameState:
     net_mode = None          # "host", "client", or None
     remote_players = {}      # {player_id: RemotePlayerGhost}
     remote_enemies = {}      # {enemy_id: RemoteEnemyGhost}
+    remote_helpers = {}      # {player_id: [{"type","x","y",...}, ...]}
     upgrade_paused_by = None # None or {"player_name": str, "level": int}
     local_username = settings_module.config.get("username", "Player")
 

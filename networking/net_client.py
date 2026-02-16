@@ -139,14 +139,17 @@ class GameClient:
         """Send our chosen username to the host."""
         self.send(MSG_USERNAME, {"username": username})
 
-    def send_player_state(self, x, y, health, class_key, level):
+    def send_player_state(self, x, y, health, class_key, level, max_health=100, equipped_hat=None, is_dead=False):
         """Send our current state to the host (called every frame or every few frames)."""
         self.send(MSG_PLAYER_STATE, {
             "x": x,
             "y": y,
             "health": health,
+            "max_health": max_health,
             "class": class_key,
             "level": level,
+            "equipped_hat": equipped_hat,
+            "is_dead": is_dead,
         })
 
     def get_messages(self):

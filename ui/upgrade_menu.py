@@ -26,6 +26,9 @@ _STAT_MAP = {
     "heal": ("HEAL", (100,255,150)),
 }
 
+# Persistent auto-upgrade toggle (survives between level-ups)
+_auto_upgrade_on = False
+
 def _draw_upgrade_icon(surf, cx, cy, key, color, r=16):
     """Draw a small icon for upgrade type."""
     base = key.replace("big_","")
@@ -121,6 +124,8 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
 
     t = 0.0
     hues = [(0,255,255),(57,255,20),(0,180,255),(255,50,200),(255,200,50)]
+    global _auto_upgrade_on
+    auto_timer = 0  # counts up each frame when auto is on (60 = 2 sec at 30fps)
 
     while True:
         sw, sh = settings_module.SCREEN_WIDTH, settings_module.SCREEN_HEIGHT
@@ -247,22 +252,86 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
                         pygame.draw.line(shim, (*bc[:3], a_s), (0,shy+ddy), (card_w,shy+ddy))
                 surf.blit(shim, (cx, cy))
 
-        hint = small_font.render("Click a card to choose", True, (38,40,52))
+        # Auto-upgrade toggle + timer
+        auto_w, auto_h = 200, 34
+        auto_rect = pygame.Rect(sw//2 - auto_w//2, sh - 56, auto_w, auto_h)
+        auto_hov = auto_rect.collidepoint(mx, my)
+        ac = (57, 255, 20) if _auto_upgrade_on else (255, 200, 50)
+        ab = pygame.Surface((auto_w, auto_h), pygame.SRCALPHA)
+        ab.fill((*ac, 30 if auto_hov or _auto_upgrade_on else 10))
+        surf.blit(ab, auto_rect.topleft)
+        pygame.draw.rect(surf, ac if auto_hov or _auto_upgrade_on else (120, 110, 60),
+                         auto_rect, 2 if auto_hov else 1, border_radius=5)
+        auto_label = "AUTO: ON  [A]" if _auto_upgrade_on else "AUTO: OFF  [A]"
+        at = small_font.render(auto_label, True, ac if _auto_upgrade_on else ((255,200,50) if auto_hov else (120,110,60)))
+        surf.blit(at, (auto_rect.centerx - at.get_width()//2, auto_rect.centery - at.get_height()//2))
+
+        # Timer bar when auto is on
+        if _auto_upgrade_on:
+            auto_timer += 1
+            bar_w = auto_w - 8
+            bar_ratio = min(1.0, auto_timer / 60.0)  # 60 frames = 2 sec at 30fps
+            bar_y = auto_rect.bottom + 2
+            pygame.draw.rect(surf, (30, 30, 40), (auto_rect.x + 4, bar_y, bar_w, 6), border_radius=3)
+            if bar_ratio > 0:
+                pygame.draw.rect(surf, ac, (auto_rect.x + 4, bar_y, int(bar_w * bar_ratio), 6), border_radius=3)
+            # Countdown text
+            secs_left = max(0, 2.0 - auto_timer / 30.0)
+            ct = desc_font.render(f"{secs_left:.1f}s", True, ac)
+            surf.blit(ct, (auto_rect.right + 4, bar_y - 2))
+
+            # Auto-pick after 2 seconds
+            if auto_timer >= 60:
+                _pick(random.randint(0, len(options)-1)); return
+        else:
+            auto_timer = 0
+
+        # Keybind badges on cards (top-left corner)
+        for i, rect in enumerate(rects):
+            if i < 5:
+                key_str = str(i + 1)
+                # Badge background
+                bw2, bh2 = 22, 22
+                bx2 = rect.x + 4
+                by2 = rect.y + 4
+                badge = pygame.Surface((bw2, bh2), pygame.SRCALPHA)
+                badge.fill((255, 255, 255, 20))
+                pygame.draw.rect(badge, (255, 255, 255, 60), (0, 0, bw2, bh2), 1, border_radius=4)
+                surf.blit(badge, (bx2, by2))
+                nl = menu_font.render(key_str, True, (200, 210, 225))
+                surf.blit(nl, (bx2 + bw2//2 - nl.get_width()//2, by2 + bh2//2 - nl.get_height()//2))
+
+        hint = small_font.render("Click or press 1-5  |  A = toggle auto", True, (38,40,52))
         surf.blit(hint, (sw//2-hint.get_width()//2, sh-20))
 
         pygame.display.flip()
 
+        def _pick(idx):
+            player_obj.apply_upgrade(options[idx]["key"])
+            if net_mode == "client" and net_client:
+                gs.upgrade_paused_by = None
+                net_client.send(MSG_UPGRADE_DONE, {})
+                net_client.send("upgrade_choosing", {"player_id":0,"choosing":False})
+            else:
+                gs.upgrade_paused_by = None
+
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT: pygame.quit(); sys.exit()
+            if ev.type == pygame.KEYDOWN:
+                # 1-5 keys
+                num_keys = {pygame.K_1: 0, pygame.K_2: 1, pygame.K_3: 2, pygame.K_4: 3, pygame.K_5: 4}
+                if ev.key in num_keys and num_keys[ev.key] < len(options):
+                    _pick(num_keys[ev.key]); return
+                # A = toggle auto
+                if ev.key == pygame.K_a:
+                    _auto_upgrade_on = not _auto_upgrade_on
+                    auto_timer = 0
             if ev.type == pygame.MOUSEBUTTONDOWN:
-                for i, rect in enumerate(rects):
-                    if rect.collidepoint(ev.pos):
-                        player_obj.apply_upgrade(options[i]["key"])
-                        if net_mode == "client" and net_client:
-                            gs.upgrade_paused_by = None
-                            net_client.send(MSG_UPGRADE_DONE, {})
-                            net_client.send("upgrade_choosing", {"player_id":0,"choosing":False})
-                        else:
-                            gs.upgrade_paused_by = None
-                        return
+                if auto_rect.collidepoint(ev.pos):
+                    _auto_upgrade_on = not _auto_upgrade_on
+                    auto_timer = 0
+                else:
+                    for i, rect in enumerate(rects):
+                        if rect.collidepoint(ev.pos):
+                            _pick(i); return
         clock.tick(30)
