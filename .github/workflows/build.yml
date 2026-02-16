@@ -16,7 +16,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pygame pyinstaller requests
+          pip install pygame pyinstaller requests numpy
 
       - name: Build EXE
         run: |
