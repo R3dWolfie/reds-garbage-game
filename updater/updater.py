@@ -87,13 +87,8 @@ def apply_update(zip_path):
     The zip should contain the game files at root level.
     """
     install_dir = get_install_dir()
-    backup_dir = os.path.join(install_dir, "_backup")
 
     try:
-        # Create backup
-        if os.path.exists(backup_dir):
-            shutil.rmtree(backup_dir)
-
         # Extract to temp dir first
         temp_extract = tempfile.mkdtemp()
         with zipfile.ZipFile(zip_path, 'r') as zf:
@@ -113,11 +108,36 @@ def apply_update(zip_path):
                     shutil.rmtree(dst)
                 shutil.copytree(src, dst)
             else:
+                # On Windows, running EXEs are locked and can't be overwritten.
+                # Rename the old file out of the way first, then copy the new one.
+                # The old .bak file gets cleaned up on next launch.
+                if os.path.exists(dst):
+                    bak = dst + ".bak"
+                    if os.path.exists(bak):
+                        try:
+                            os.remove(bak)
+                        except Exception:
+                            pass
+                    try:
+                        os.rename(dst, bak)
+                    except Exception:
+                        pass  # If rename fails, try copy anyway
                 shutil.copy2(src, dst)
 
-        # Cleanup
-        shutil.rmtree(temp_extract)
-        os.unlink(zip_path)
+        # Clean up old .bak files from previous updates
+        for f in os.listdir(install_dir):
+            if f.endswith(".bak"):
+                try:
+                    os.remove(os.path.join(install_dir, f))
+                except Exception:
+                    pass  # Still locked, will be cleaned next time
+
+        # Cleanup temp files
+        shutil.rmtree(temp_extract, ignore_errors=True)
+        try:
+            os.unlink(zip_path)
+        except Exception:
+            pass
 
         return True
     except Exception as e:
