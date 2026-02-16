@@ -1,157 +1,133 @@
 # updater/updater.py
 """
-Auto-updater that checks your server for new versions.
-Server should expose:
-  GET /api/version  -> {"version": "0.2.0", "url": "https://your-server.com/downloads/reds_garbage_game_0.2.0.zip", "changelog": "Fixed stuff"}
-  GET /downloads/<file> -> the actual zip/exe
+Simple updater - Just downloads a ZIP and replaces the EXE.
 """
 
 import os
 import sys
-import json
-import shutil
 import zipfile
 import tempfile
 import subprocess
 import requests
-from updater.version import VERSION, VERSION_URL, GAME_NAME
-
-
-def get_install_dir():
-    """Get the directory where the game is installed."""
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
-
-
-def parse_version(v):
-    """Convert '0.1.0' to tuple (0, 1, 0) for comparison."""
-    return tuple(int(x) for x in v.strip().split('.'))
+from updater.version import VERSION, VERSION_URL
 
 
 def check_for_update():
-    """
-    Check the server for a newer version.
-    Returns dict with update info or None if up to date.
-    """
+    """Check if there's a new version available."""
     try:
         response = requests.get(VERSION_URL, timeout=10)
-        response.raise_for_status()
         data = response.json()
 
-        remote_version = data.get("version", VERSION)
-        if parse_version(remote_version) > parse_version(VERSION):
+        remote_version = data.get("version")
+        download_url = data.get("url")
+
+        if remote_version != VERSION:
+            print(f"[Update] New version available: {remote_version} (current: {VERSION})")
             return {
                 "version": remote_version,
-                "url": data.get("url", ""),
-                "changelog": data.get("changelog", "No changelog provided."),
-                "mandatory": data.get("mandatory", False),
+                "url": download_url,
+                "changelog": data.get("changelog", "")
             }
+
+        print(f"[Update] Up to date ({VERSION})")
         return None
+
     except Exception as e:
-        print(f"[Updater] Could not check for updates: {e}")
+        print(f"[Update] Check failed: {e}")
         return None
 
 
-def download_update(url, progress_callback=None):
-    """
-    Download the update zip to a temp file.
-    progress_callback(downloaded_bytes, total_bytes) is called during download.
-    Returns the path to the downloaded file.
-    """
+def download_and_apply_update(url):
+    """Download ZIP and replace the EXE."""
     try:
+        # Get the folder where the game EXE is located
+        if getattr(sys, 'frozen', False):
+            game_folder = os.path.dirname(sys.executable)
+            exe_name = os.path.basename(sys.executable)
+        else:
+            print("[Update] Not running from EXE, skipping update")
+            return False
+
+        print(f"[Update] Downloading from {url}")
+
+        # Download the ZIP
         response = requests.get(url, stream=True, timeout=120)
         response.raise_for_status()
-        total = int(response.headers.get('content-length', 0))
 
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
-        downloaded = 0
-
+        # Save to temp file
+        temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
         for chunk in response.iter_content(chunk_size=8192):
             if chunk:
-                tmp.write(chunk)
-                downloaded += len(chunk)
-                if progress_callback and total > 0:
-                    progress_callback(downloaded, total)
+                temp_zip.write(chunk)
+        temp_zip.close()
 
-        tmp.close()
-        return tmp.name
-    except Exception as e:
-        print(f"[Updater] Download failed: {e}")
-        return None
+        print(f"[Update] Downloaded to {temp_zip.name}")
 
-
-def apply_update(zip_path):
-    """
-    Extract the update zip over the current installation.
-    The zip should contain the game files at root level.
-    """
-    install_dir = get_install_dir()
-
-    try:
-        # Extract to temp dir first
+        # Extract to temp folder
         temp_extract = tempfile.mkdtemp()
-        with zipfile.ZipFile(zip_path, 'r') as zf:
+        with zipfile.ZipFile(temp_zip.name, 'r') as zf:
             zf.extractall(temp_extract)
 
-        # Copy new files over
-        for item in os.listdir(temp_extract):
-            src = os.path.join(temp_extract, item)
-            dst = os.path.join(install_dir, item)
+        print(f"[Update] Extracted to {temp_extract}")
 
-            # Don't overwrite config or saves
-            if item in ('config.json', 'saves'):
-                continue
+        # Find the new EXE in the extracted files
+        new_exe = None
+        for root, dirs, files in os.walk(temp_extract):
+            for file in files:
+                if file.endswith('.exe'):
+                    new_exe = os.path.join(root, file)
+                    break
+            if new_exe:
+                break
 
-            if os.path.isdir(src):
-                if os.path.exists(dst):
-                    shutil.rmtree(dst)
-                shutil.copytree(src, dst)
-            else:
-                # On Windows, running EXEs are locked and can't be overwritten.
-                # Rename the old file out of the way first, then copy the new one.
-                # The old .bak file gets cleaned up on next launch.
-                if os.path.exists(dst):
-                    bak = dst + ".bak"
-                    if os.path.exists(bak):
-                        try:
-                            os.remove(bak)
-                        except Exception:
-                            pass
-                    try:
-                        os.rename(dst, bak)
-                    except Exception:
-                        pass  # If rename fails, try copy anyway
-                shutil.copy2(src, dst)
+        if not new_exe:
+            print("[Update] ERROR: No .exe found in update ZIP!")
+            return False
 
-        # Clean up old .bak files from previous updates
-        for f in os.listdir(install_dir):
-            if f.endswith(".bak"):
-                try:
-                    os.remove(os.path.join(install_dir, f))
-                except Exception:
-                    pass  # Still locked, will be cleaned next time
+        print(f"[Update] Found new EXE: {new_exe}")
 
-        # Cleanup temp files
-        shutil.rmtree(temp_extract, ignore_errors=True)
-        try:
-            os.unlink(zip_path)
-        except Exception:
-            pass
+        # Backup old EXE
+        old_exe = os.path.join(game_folder, exe_name)
+        backup_exe = old_exe + ".bak"
 
+        if os.path.exists(backup_exe):
+            os.remove(backup_exe)
+
+        print(f"[Update] Backing up {exe_name} to {exe_name}.bak")
+        os.rename(old_exe, backup_exe)
+
+        # Copy new EXE
+        import shutil
+        print(f"[Update] Installing new EXE")
+        shutil.copy2(new_exe, old_exe)
+
+        # Copy _internal folder if it exists
+        internal_src = os.path.join(os.path.dirname(new_exe), "_internal")
+        internal_dst = os.path.join(game_folder, "_internal")
+
+        if os.path.exists(internal_src):
+            print(f"[Update] Updating _internal folder")
+            if os.path.exists(internal_dst):
+                shutil.rmtree(internal_dst)
+            shutil.copytree(internal_src, internal_dst)
+
+        # Cleanup
+        os.unlink(temp_zip.name)
+        shutil.rmtree(temp_extract)
+
+        print("[Update] Update complete! Restart the game.")
         return True
+
     except Exception as e:
-        print(f"[Updater] Apply failed: {e}")
+        print(f"[Update] Failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
 def restart_game():
-    """Restart the game executable after an update."""
+    """Restart the game after update."""
     if getattr(sys, 'frozen', False):
-        exe = sys.executable
-        subprocess.Popen([exe])
-        sys.exit(0)
-    else:
-        python = sys.executable
-        subprocess.Popen([python] + sys.argv)
+        # Launch a new instance
+        subprocess.Popen([sys.executable])
         sys.exit(0)
