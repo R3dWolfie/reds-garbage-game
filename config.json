@@ -1,0 +1,43 @@
+{
+  "resolution": [
+    1920,
+    1080
+  ],
+  "fullscreen": true,
+  "master_volume": 1,
+  "sfx_volume": 1,
+  "music_volume": 1,
+  "username": "Player",
+  "mouse_move": false,
+  "gold": 0,
+  "highest_wave": 1,
+  "equipped_hat": null,
+  "collected_hats": [],
+  "perma_upgrades": {
+    "roomba_count": 0,
+    "roomba_speed": 0,
+    "saw_count": 0,
+    "saw_damage": 0,
+    "saw_speed": 0,
+    "crit_chance": 0,
+    "base_magnet": 0,
+    "gold_magnet": 0,
+    "armor": 0,
+    "xp_bonus": 0,
+    "starting_hp": 0,
+    "gold_rush": 0,
+    "revival": 0,
+    "roomba_range": 0,
+    "dash_power": 0,
+    "health_regen": 0,
+    "dodge_chance": 0,
+    "thorns": 0,
+    "move_speed": 0,
+    "fire_rate_boost": 0,
+    "bullet_ricochet": 0,
+    "roomba_damage": 0,
+    "saw_size": 0,
+    "shield": 0,
+    "lucky_drops": 0
+  }
+}
