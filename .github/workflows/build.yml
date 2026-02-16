@@ -20,7 +20,7 @@ jobs:
 
       - name: Build EXE
         run: |
-          python -m PyInstaller --name="RedsGarbageGame" --onedir --noconsole --add-data="settings.py;." --add-data="updater;updater" --add-data="networking;networking" --add-data="config.json;." --add-data="player_base.py;." --add-data="player_default.py;." --add-data="player_tank.py;." --add-data="player_laser.py;." --add-data="enemy.py;." --add-data="objects.py;." --add-data="sprite_loader.py;." main.py
+          python -m PyInstaller --name="RedsGarbageGame" --onedir --noconsole --add-data="core;core" --add-data="entities;entities" --add-data="game;game" --add-data="ui;ui" --add-data="networking;networking" --add-data="updater;updater" --add-data="config.json;." main.py
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4
