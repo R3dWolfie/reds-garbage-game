@@ -1703,6 +1703,12 @@ class RemoteEnemyGhost(pygame.sprite.Sprite):
         """Mirror method — doesn't actually do damage calc, just for interface compatibility."""
         pass
 
+    def get_xp_drop_count(self):
+        """Calculate XP drop count based on max health (same as Enemy class)."""
+        base = 1
+        bonus = self.max_health // 3
+        return base + bonus
+
     def draw_health_bar(self, surf):
         """Draw health bar above enemy ghost."""
         if self.health >= self.max_health:
