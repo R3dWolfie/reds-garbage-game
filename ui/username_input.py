@@ -63,7 +63,7 @@ def show_username_input():
         surf.blit(btn_txt, (confirm_btn.centerx - btn_txt.get_width() // 2,
                             confirm_btn.centery - btn_txt.get_height() // 2))
 
-        pygame.display.flip()
+        display_mgr.present()
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -102,4 +102,4 @@ def show_username_input():
                     _save_username(gs.local_username)
                     return gs.local_username
 
-        clock.tick(60)
+        clock.tick(settings_module.FPS or 0)

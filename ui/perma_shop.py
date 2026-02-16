@@ -261,8 +261,9 @@ def show_perma_shop():
 
         # Title
         title = header_font.render("SHOP", True, GOLD)
-        glow = pygame.Surface((title.get_width() + 20, title.get_height() + 10), pygame.SRCALPHA)
-        glow.fill((255, 215, 0, 15))
+        glow = pygame.Surface((title.get_width() + 20, title.get_height() + 10))
+        glow.fill((255, 215, 0))
+        glow.set_alpha(15)
         surf.blit(glow, (sw // 2 - glow.get_width() // 2, 10))
         surf.blit(title, (sw // 2 - title.get_width() // 2, 15))
 
@@ -340,8 +341,9 @@ def show_perma_shop():
                     bg_alpha = 12
                     border_col = (50, 60, 75)
 
-                card_bg = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
-                card_bg.fill((*cat_color[:3], bg_alpha))
+                card_bg = pygame.Surface((card_w, card_h))
+                card_bg.fill(cat_color[:3])
+                card_bg.set_alpha(bg_alpha)
                 surf.blit(card_bg, (cx, cy))
 
                 # Border with subtle glow
@@ -400,9 +402,10 @@ def show_perma_shop():
                     cost_str = f"{cost}g"
                     cost_color = GOLD if can_afford else (255, 50, 80)
                     buy_rect = pygame.Rect(cx + card_w - 75, cy + card_h - 38, 65, 28)
-                    buy_bg = pygame.Surface((65, 28), pygame.SRCALPHA)
+                    buy_bg = pygame.Surface((65, 28))
                     buy_hover = buy_rect.collidepoint(mx, my)
-                    buy_bg.fill((*cost_color[:3], 35 if buy_hover else 15))
+                    buy_bg.fill(cost_color[:3])
+                    buy_bg.set_alpha(35 if buy_hover else 15)
                     surf.blit(buy_bg, buy_rect.topleft)
                     pygame.draw.rect(surf, cost_color, buy_rect, 2)
                     buy_label = menu_font.render(cost_str, True, cost_color)
@@ -421,15 +424,16 @@ def show_perma_shop():
         btn_w, btn_h = 200, 45
         back_btn = pygame.Rect(sw // 2 - btn_w // 2, sh - 55, btn_w, btn_h)
         hovered_back = back_btn.collidepoint(mx, my)
-        bb = pygame.Surface((btn_w, btn_h), pygame.SRCALPHA)
-        bb.fill((255, 255, 255, 20 if hovered_back else 8))
+        bb = pygame.Surface((btn_w, btn_h))
+        bb.fill((255, 255, 255))
+        bb.set_alpha(20 if hovered_back else 8)
         surf.blit(bb, back_btn.topleft)
         pygame.draw.rect(surf, (200, 200, 220), back_btn, 2 if hovered_back else 1)
         back_txt = menu_font.render("BACK", True, (200, 200, 220))
         surf.blit(back_txt, (back_btn.centerx - back_txt.get_width() // 2,
                               back_btn.centery - back_txt.get_height() // 2))
 
-        pygame.display.flip()
+        display_mgr.present()
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:

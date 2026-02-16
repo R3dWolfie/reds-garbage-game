@@ -18,7 +18,7 @@ class PlayerSniper(PlayerBase):
     BASE_STATS = {
         "speed": 3,             # Slow
         "fire_rate": 90,        # Very slow fire
-        "bullet_speed": 14,     # Blazing fast bullets
+        "bullet_speed": 40,     # Blazing fast bullets
         "max_health": 70,       # Very fragile
         "multishot": 1,
         "damage": 8,            # Massive damage

@@ -14,29 +14,42 @@ _t = 0.0
 _hex_cache = None
 _particles = []
 
+
+
 def _build_hex_grid(sw, sh, r=55):
     grid = []
     hw, hh = int(r * math.sqrt(3)), r * 2
+    # Pre-compute hex points (no trig per frame)
+    hex_offsets = [(r * math.cos(math.radians(60 * k - 30)),
+                    r * math.sin(math.radians(60 * k - 30))) for k in range(6)]
     for row in range(-1, sh // int(hh * 0.75) + 3):
         for col in range(-1, sw // hw + 3):
             x = col * hw + (row % 2) * (hw // 2)
             y = row * int(hh * 0.75)
-            grid.append((x, y, (col * 0.4 + row * 0.6) % (2 * math.pi), r))
+            pts = [(x + ox, y + oy) for ox, oy in hex_offsets]
+            phase = (col * 0.4 + row * 0.6) % (2 * math.pi)
+            grid.append((pts, phase))
     return grid
 
 def _draw_hex_bg(surf, sw, sh, t):
     global _hex_cache
     if _hex_cache is None: _hex_cache = _build_hex_grid(sw, sh)
-    for hx, hy, phase, r in _hex_cache:
-        p = math.sin(t * 0.7 + phase) * 0.5 + 0.5
+    # Batch: only recompute color every 3rd frame
+    frame = int(t * 25)
+    if frame % 3 != 0:
+        # Use a fixed dim color when not updating
+        for pts, phase in _hex_cache:
+            pygame.draw.polygon(surf, (5, 12, 25), pts, 1)
+        return
+    st = t * 0.7
+    for pts, phase in _hex_cache:
+        p = math.sin(st + phase) * 0.5 + 0.5
         c = (int(p * 10), int(5 + p * 18), int(15 + p * 30))
-        pts = [(hx + r * math.cos(math.radians(60 * k - 30)),
-                hy + r * math.sin(math.radians(60 * k - 30))) for k in range(6)]
         pygame.draw.polygon(surf, c, pts, 1)
 
 def _tick_particles(surf, sw, sh, t):
     global _particles
-    while len(_particles) < 20:
+    while len(_particles) < 15:
         _particles.append([random.randint(0, sw), random.randint(0, sh),
                            random.uniform(-0.3, 0.3), random.uniform(-0.8, -0.2),
                            random.choice([(255,30,60),(0,255,255),(57,255,20),(255,215,0)]),
@@ -44,35 +57,28 @@ def _tick_particles(surf, sw, sh, t):
     alive = []
     for p in _particles:
         p[0] += p[2]; p[1] += p[3]; p[6] += 0.03
-        a = int((math.sin(p[6]) * 0.5 + 0.5) * 80 + 20)
-        ps = pygame.Surface((p[5]*4, p[5]*4), pygame.SRCALPHA)
-        pygame.draw.circle(ps, (*p[4], min(255, a)), (p[5]*2, p[5]*2), p[5])
-        surf.blit(ps, (int(p[0]-p[5]*2), int(p[1]-p[5]*2)))
+        # Direct draw - no SRCALPHA surface
+        pygame.draw.circle(surf, p[4], (int(p[0]), int(p[1])), p[5])
         if 0 <= p[0] <= sw and -50 <= p[1] <= sh + 50: alive.append(p)
     _particles = alive
 
 def _neon_text(surf, text, fnt, color, cx, cy, pulse_t=0):
     txt = fnt.render(text, True, color)
     tx, ty = cx - txt.get_width()//2, cy - txt.get_height()//2
-    if pulse_t:
-        p = math.sin(pulse_t) * 0.4 + 0.6
-        gs2 = pygame.Surface((txt.get_width()+20, txt.get_height()+10), pygame.SRCALPHA)
-        gs2.fill((*color[:3], int(12 * p)))
-        surf.blit(gs2, (tx-10, ty-5))
     surf.blit(txt, (tx, ty))
 
 def _neon_btn(surf, rect, label, color, fnt, mx, my, t):
-    """Neon button — no icons, clean text only."""
+    """Neon button — optimized, no per-frame surface allocation."""
     hov = rect.collidepoint(mx, my)
-    # BG
-    bg = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
-    bg.fill((*color[:3], 50 if hov else 12))
-    surf.blit(bg, rect.topleft)
-    # Border glow
-    gr = 8 if hov else 3
-    for i in range(gr, 0, -2):
-        a = int((20 if hov else 8) * i / gr)
-        pygame.draw.rect(surf, (*color[:3], a), (rect.x-i, rect.y-i, rect.w+i*2, rect.h+i*2), 2, border_radius=6)
+    # Simple filled rect background
+    if hov:
+        pygame.draw.rect(surf, (*color[:3],), rect, 0, border_radius=6)
+        # Darken overlay for transparency effect
+        dark = pygame.Surface((rect.w, rect.h))
+        dark.fill((3, 3, 12))
+        dark.set_alpha(200)
+        surf.blit(dark, rect.topleft)
+    # Border
     pygame.draw.rect(surf, color, rect, 2 if not hov else 3, border_radius=6)
     # Text centered
     txt = fnt.render(label, True, WHITE if hov else color)
@@ -118,9 +124,6 @@ def _draw_class_icon(surf, cx, cy, sz, key, color):
             pygame.draw.line(surf, color, (x1, y1), (x2, y2), 2 if i % 2 else 3)
         pygame.draw.circle(surf, color, (cx, cy), r//4)
         # Glow ring
-        glow = pygame.Surface((sz+8, sz+8), pygame.SRCALPHA)
-        pygame.draw.circle(glow, (*color[:3], 30), (sz//2+4, sz//2+4), r//3+4)
-        surf.blit(glow, (cx-sz//2-4, cy-sz//2-4))
     elif key == "gunner":
         # Gunner — triple barrel / gatling
         for off in [-r//3, 0, r//3]:
@@ -140,9 +143,6 @@ def _draw_class_icon(surf, cx, cy, sz, key, color):
         pygame.draw.rect(surf, color, (cx-r//5, cy-r+2, r*2//5, r*2-4), border_radius=2)
         pygame.draw.rect(surf, color, (cx-r+2, cy-r//5, r*2-4, r*2//5), border_radius=2)
         # Aura ring
-        glow = pygame.Surface((sz+8, sz+8), pygame.SRCALPHA)
-        pygame.draw.circle(glow, (*color[:3], 25), (sz//2+4, sz//2+4), r+2, 2)
-        surf.blit(glow, (cx-sz//2-4, cy-sz//2-4))
     else:
         pygame.draw.circle(surf, color, (cx, cy), r, 3)
         pygame.draw.circle(surf, color, (cx, cy), r//2)
@@ -197,7 +197,7 @@ def show_main_menu():
         hint = small_font.render("WASD move  |  SPACE/CLICK dash  |  ESC pause", True, (40,40,55))
         surf.blit(hint, (sw//2 - hint.get_width()//2, sh - 35))
 
-        pygame.display.flip()
+        display_mgr.present()
 
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT: pygame.quit(); sys.exit()
@@ -210,7 +210,7 @@ def show_main_menu():
                     settings_menu.run(surf.copy()); _hex_cache = None
                 if rects[5].collidepoint(ev.pos): show_username_input()
                 if rects[6].collidepoint(ev.pos): pygame.quit(); sys.exit()
-        clock.tick(30)
+        clock.tick(settings_module.FPS or 0)
 
 
 # ─── CLASS SELECTION ───
@@ -267,8 +267,9 @@ def show_class_selection():
             hov = cr.collidepoint(mx, my)
             nc = neon[i % len(neon)]
 
-            bg = pygame.Surface((cw, ch), pygame.SRCALPHA)
-            bg.fill((*nc, 35 if hov else 10))
+            bg = pygame.Surface((cw, ch))
+            bg.fill(nc[:3])
+            bg.set_alpha(35 if hov else 10)
             pygame.draw.rect(bg, (*nc, 80 if hov else 40), (0, 0, cw, 3))
             surf.blit(bg, (cx, cy))
 
@@ -323,8 +324,9 @@ def show_class_selection():
         sel_col = (0,255,255)
         cont_w = 360
         cont_x = sw//2 - cont_w//2
-        cont_bg = pygame.Surface((cont_w, 36), pygame.SRCALPHA)
-        cont_bg.fill((0,255,255,8))
+        cont_bg = pygame.Surface((cont_w, 36))
+        cont_bg.fill((0,255,255))
+        cont_bg.set_alpha(8)
         surf.blit(cont_bg, (cont_x, skip_y))
         pygame.draw.rect(surf, (*sel_col, 40), (cont_x, skip_y, cont_w, 36), 1, border_radius=5)
 
@@ -362,7 +364,7 @@ def show_class_selection():
         hint = small_font.render("Pick a class to begin", True, (50,50,65))
         surf.blit(hint, (sw//2-hint.get_width()//2, sh-24))
 
-        pygame.display.flip()
+        display_mgr.present()
 
         # Net
         if gs.net_mode == "host" and gs.net_host and waiting_for_players:
@@ -390,7 +392,7 @@ def show_class_selection():
                                 if gs.net_mode == "host": players_ready = set()
                                 elif gs.net_mode == "client": gs.net_client.send("class_ready",{"class":key})
                             else: return (key, skip_options[skip_index])
-        clock.tick(30)
+        clock.tick(settings_module.FPS or 0)
 
 def show_pause_menu():
     from ui.settings_menu import settings_menu
@@ -402,14 +404,16 @@ def show_pause_menu():
         surf = display_mgr.get_screen()
         mx, my = pygame.mouse.get_pos()
 
-        ov = pygame.Surface((sw, sh), pygame.SRCALPHA)
-        ov.fill((0, 0, 8, 210))
+        ov = pygame.Surface((sw, sh))
+        ov.fill((0, 0, 8))
+        ov.set_alpha(210)
         surf.blit(ov, (0, 0))
 
         pw, ph = 340, 310
         px, py = sw//2-pw//2, sh//2-ph//2
-        panel = pygame.Surface((pw, ph), pygame.SRCALPHA)
-        panel.fill((8, 8, 20, 230))
+        panel = pygame.Surface((pw, ph))
+        panel.fill((8, 8, 20))
+        panel.set_alpha(230)
         surf.blit(panel, (px, py))
         pygame.draw.rect(surf, (0,255,255), (px, py, pw, ph), 2, border_radius=8)
 
@@ -430,7 +434,7 @@ def show_pause_menu():
             _neon_btn(surf, r, lbl, col, menu_font, mx, my, _t)
             rects.append((r, lbl.lower().replace(" ","_")))
 
-        pygame.display.flip()
+        display_mgr.present()
 
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT: pygame.quit(); sys.exit()
@@ -441,7 +445,7 @@ def show_pause_menu():
                         if act == "settings": settings_menu.run(surf.copy())
                         elif act == "quit_game": pygame.quit(); sys.exit()
                         else: return act
-        clock.tick(30)
+        clock.tick(settings_module.FPS or 0)
 
 
 # ─── GAME OVER ───
@@ -464,8 +468,9 @@ def show_game_over(player_obj, wave):
 
         pw, ph = 400, 210
         px, py = sw//2-pw//2, sh//5+45
-        panel = pygame.Surface((pw, ph), pygame.SRCALPHA)
-        panel.fill((8,8,20,180))
+        panel = pygame.Surface((pw, ph))
+        panel.fill((8,8,20))
+        panel.set_alpha(180)
         surf.blit(panel, (px, py))
         pygame.draw.rect(surf, (255,30,60,70), (px, py, pw, ph), 1, border_radius=6)
 
@@ -496,7 +501,7 @@ def show_game_over(player_obj, wave):
             _neon_btn(surf, r, lbl, col, menu_font, mx, my, _t)
             rects.append((r, act))
 
-        pygame.display.flip()
+        display_mgr.present()
 
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT: pygame.quit(); sys.exit()
@@ -505,4 +510,4 @@ def show_game_over(player_obj, wave):
                     if r.collidepoint(ev.pos):
                         if act == "exit": pygame.quit(); sys.exit()
                         return act
-        clock.tick(30)
+        clock.tick(settings_module.FPS or 0)

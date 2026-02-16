@@ -1,6 +1,7 @@
 # player_base.py
 import pygame
 import math
+import core.settings as settings_module
 from core.settings import *
 from core.sprite_loader import load_sprite, make_neon_sprite
 
@@ -89,13 +90,15 @@ class PlayerBase(pygame.sprite.Sprite):
     def update(self):
         keys = pygame.key.get_pressed()
         speed = self.stats["speed"]
+        import core.settings as _settings
+        _dt = _settings.get_dt() if hasattr(_settings, 'get_dt') else 1.0
 
         # Track movement direction for dash
         move_dx, move_dy = 0, 0
 
         # Check if mouse movement is enabled
-        import core.settings as settings_module
-        use_mouse = settings_module.config.get("mouse_move", False)
+        use_mouse = _settings.config.get("mouse_move", False)
+
 
         if use_mouse:
             mx, my = pygame.mouse.get_pos()
@@ -142,14 +145,14 @@ class PlayerBase(pygame.sprite.Sprite):
                 else:
                     self.rect.x += self.dash_dx
                     self.rect.y += self.dash_dy
-                    self.dash_duration -= 1
+                    self.dash_duration -= _dt
                     self.dash_invincible = True
                     if self.dash_duration == 0:
                         self.dash_invincible = False
             else:
                 self.rect.x += self.dash_dx
                 self.rect.y += self.dash_dy
-                self.dash_duration -= 1
+                self.dash_duration -= _dt
                 self.dash_invincible = True
                 if self.dash_duration == 0:
                     self.dash_invincible = False
@@ -162,9 +165,10 @@ class PlayerBase(pygame.sprite.Sprite):
                 self.rect.x += move_dx * speed
                 self.rect.y += move_dy * speed
 
-        # Cooldown tick
+        # Cooldown tick (dt-aware)
+        _dt = settings_module.get_dt() if hasattr(settings_module, 'get_dt') else 1.0
         if self.dash_cooldown > 0:
-            self.dash_cooldown -= 1
+            self.dash_cooldown -= _dt
 
         sw = SCREEN_WIDTH
         sh = SCREEN_HEIGHT
@@ -172,7 +176,7 @@ class PlayerBase(pygame.sprite.Sprite):
 
         # Reduce collision cooldown
         if self.collision_cooldown > 0:
-            self.collision_cooldown -= 1
+            self.collision_cooldown -= _dt
 
     def try_dash(self, cur_dx=None, cur_dy=None, mouse_target=None):
         """Attempt a dash. Called each frame while space is held."""

@@ -8,6 +8,8 @@ from core.game_state import (
     display_mgr, clock, font, small_font, title_font, menu_font, header_font, desc_font
 )
 
+
+
 WHITE = (255, 255, 255)
 
 
@@ -314,15 +316,19 @@ def show_hat_menu():
             rc = RARITY_COLORS.get(hat["rarity"], (180,180,190))
 
             # Card bg
-            bg = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
+            bg = pygame.Surface((card_w, card_h))
             if not owned:
-                bg.fill((20, 20, 30, 200))
+                bg.fill((20, 20, 30))
+                bg.set_alpha(200)
             elif is_eq:
-                bg.fill((*rc[:3], 50))
+                bg.fill(rc[:3])
+                bg.set_alpha(50)
             elif hov:
-                bg.fill((*rc[:3], 30))
+                bg.fill(rc[:3])
+                bg.set_alpha(30)
             else:
-                bg.fill((*rc[:3], 12))
+                bg.fill(rc[:3])
+                bg.set_alpha(12)
             surf.blit(bg, (cx, cy))
 
             # Border
@@ -360,8 +366,9 @@ def show_hat_menu():
         # Unequip button
         ub_rect = pygame.Rect(sw//2 - 80, sh - 80, 160, 36)
         ub_hov = ub_rect.collidepoint(mx, my)
-        ub_bg = pygame.Surface((160, 36), pygame.SRCALPHA)
-        ub_bg.fill((100, 100, 120, 40 if ub_hov else 15))
+        ub_bg = pygame.Surface((160, 36))
+        ub_bg.fill((100, 100, 120))
+        ub_bg.set_alpha(40 if ub_hov else 15)
         surf.blit(ub_bg, ub_rect.topleft)
         pygame.draw.rect(surf, (160,170,190) if ub_hov else (80,80,100), ub_rect, 2, border_radius=5)
         ubt = menu_font.render("Remove Hat" if equipped else "No Hat", True,
@@ -374,7 +381,7 @@ def show_hat_menu():
         bbt = menu_font.render("Back", True, WHITE if bb_hov else (100,110,130))
         surf.blit(bbt, (bb_rect.centerx - bbt.get_width()//2, bb_rect.centery - bbt.get_height()//2))
 
-        pygame.display.flip()
+        display_mgr.present()
 
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
@@ -397,4 +404,4 @@ def show_hat_menu():
                         save_config(settings_module.config)
                         break
 
-        clock.tick(30)
+        clock.tick(settings_module.FPS or 0)

@@ -115,7 +115,7 @@ def show_multiplayer_menu():
         back_r = pygame.Rect(bx, cy, bw, 36)
         _neon_btn(surf, back_r, "Back to Main Menu", (130,140,160), menu_font, mx, my, _t)
 
-        pygame.display.flip()
+        display_mgr.present()
 
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT: pygame.quit(); sys.exit()
@@ -126,7 +126,7 @@ def show_multiplayer_menu():
                         ip = ip_input.strip()
                         if ip:
                             status_msg = f"Connecting to {ip}..."; status_color = (255,255,0)
-                            pygame.display.flip()
+                            display_mgr.present()
                             gs.net_client = GameClient()
                             if gs.net_client.connect(ip):
                                 gs.net_mode = "client"; gs.net_client.send_username(gs.local_username)
@@ -151,14 +151,14 @@ def show_multiplayer_menu():
                     ip = ip_input.strip()
                     if ip:
                         status_msg = f"Connecting to {ip}..."; status_color = (255,255,0)
-                        pygame.display.flip()
+                        display_mgr.present()
                         gs.net_client = GameClient()
                         if gs.net_client.connect(ip):
                             gs.net_mode = "client"; gs.net_client.send_username(gs.local_username)
                             return "client", gs.net_client
                         else: status_msg = "Connection failed!"; status_color = (255,30,60); gs.net_client = None
                 if back_r.collidepoint(ev.pos): return None, None
-        clock.tick(30)
+        clock.tick(settings_module.FPS or 0)
 
 
 def show_lobby():
@@ -225,7 +225,7 @@ def show_lobby():
         leave_r = pygame.Rect(bx2, sh-90, bw2, bh2)
         _neon_btn(surf, leave_r, "LEAVE", (255,30,60), menu_font, mx, my, _t)
 
-        pygame.display.flip()
+        display_mgr.present()
 
         if gs.net_mode == "client" and gs.net_client:
             for msg in gs.net_client.get_messages():
@@ -239,4 +239,4 @@ def show_lobby():
                     if gs.net_host: gs.net_host.broadcast(MSG_GAME_START, {})
                     return "start"
                 if leave_r.collidepoint(ev.pos): return "leave"
-        clock.tick(30)
+        clock.tick(settings_module.FPS or 0)

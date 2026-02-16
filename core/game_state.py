@@ -47,22 +47,48 @@ PLAYER_CLASSES = {
 # ===========================================================
 
 class DisplayManager:
+    """Manages display. Uses pygame.SCALED for automatic resolution handling."""
     def __init__(self):
         self.config = settings_module.config
         self.screen = None
+        self._actual_w = 1920
+        self._actual_h = 1080
         self.apply()
 
     def apply(self):
         w, h = self.config["resolution"]
+        fullscreen = self.config.get("fullscreen", True)
+        borderless = self.config.get("borderless", False)
+        fps = self.config.get("fps", 60)
 
-        if self.config["fullscreen"]:
-            self.screen = pygame.display.set_mode((w, h), pygame.FULLSCREEN | pygame.SCALED)
-        else:
-            self.screen = pygame.display.set_mode((w, h))
+        # pygame.SCALED handles all resolution scaling automatically
+        # It renders at the requested resolution and scales to fit the window
+        flags = pygame.SCALED
+        if fullscreen:
+            flags |= pygame.FULLSCREEN
+        if borderless and not fullscreen:
+            flags |= pygame.NOFRAME
+
+        try:
+            self.screen = pygame.display.set_mode((w, h), flags)
+        except Exception:
+            try:
+                self.screen = pygame.display.set_mode((w, h))
+            except Exception:
+                self.screen = pygame.display.set_mode((1920, 1080))
 
         pygame.display.set_caption("Red's Garbage Game")
         settings_module.SCREEN_WIDTH = w
         settings_module.SCREEN_HEIGHT = h
+        settings_module.FPS = fps
+        self._actual_w = w
+        self._actual_h = h
+
+    def get_screen(self):
+        return self.screen
+
+    def present(self):
+        pygame.display.flip()
 
     def set_resolution(self, res):
         self.config["resolution"] = list(res)
@@ -76,13 +102,21 @@ class DisplayManager:
         self.config["fullscreen"] = val
         self.apply()
 
-    def get_screen(self):
-        return self.screen
+    def set_borderless(self, val):
+        self.config["borderless"] = val
+        self.apply()
+
+    def set_vsync(self, val):
+        self.config["vsync"] = val
+        self.apply()
+
+    def set_fps(self, fps):
+        self.config["fps"] = fps
+        settings_module.FPS = fps
 
     def get_resolution(self):
         return (settings_module.SCREEN_WIDTH, settings_module.SCREEN_HEIGHT)
 
-    # ---- Volume controls (used by SettingsMenu) ----
     def set_master_volume(self, val):
         self.config["master_volume"] = val
         settings_module.save_config(self.config)

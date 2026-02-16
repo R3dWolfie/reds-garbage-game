@@ -6,6 +6,9 @@ import os
 DEFAULT_CONFIG = {
     "resolution": [1920, 1080],
     "fullscreen": True,
+    "borderless": True,
+    "vsync": True,
+    "fps": 60,
     "master_volume": 0.7,
     "sfx_volume": 0.7,
     "music_volume": 0.5,
@@ -96,7 +99,12 @@ config = load_config()
 
 SCREEN_WIDTH = config["resolution"][0]
 SCREEN_HEIGHT = config["resolution"][1]
-FPS = 60
+FPS = config.get("fps", 60)
+
+# Delta time: normalize game speed to 60fps baseline
+# At 60fps dt=1.0, at 120fps dt=0.5, etc.
+FPS_OPTIONS = [30, 60, 75, 90, 120, 144, 165, 180, 240, 0]  # 0 = unlimited
+FPS_LABELS = ["30", "60", "75", "90", "120", "144", "165", "180", "240", "∞"]
 
 RESOLUTIONS = [
     (800, 600),
@@ -105,6 +113,8 @@ RESOLUTIONS = [
     (1366, 768),
     (1600, 900),
     (1920, 1080),
+    (2560, 1440),
+    (3840, 2160),
 ]
 
 # Colors
@@ -543,3 +553,7 @@ RARITY_COLORS = {
     "epic":      (180, 50, 255),
     "legendary": (255, 200, 50),
 }
+
+def get_dt():
+    """Delta time multiplier: at 60fps dt=1.0, at 120fps dt=0.5, etc."""
+    return 60.0 / max(1, FPS) if FPS > 0 else 1.0

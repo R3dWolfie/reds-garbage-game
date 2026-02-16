@@ -270,6 +270,10 @@ def run_game(class_key, starting_wave=1):
     beam_hit_this_frame = set()  # Track enemies already hit by beam this frame
 
     while True:
+        # Delta time: real ms since last frame, normalized to 60fps baseline
+        raw_dt = clock.get_time()  # ms since last tick
+        dt = max(0.1, min(4.0, raw_dt / 16.667))  # 16.667ms = 60fps, clamp to prevent insanity
+
         sw = settings_module.SCREEN_WIDTH
         sh = settings_module.SCREEN_HEIGHT
         surf = display_mgr.get_screen()
@@ -315,7 +319,7 @@ def run_game(class_key, starting_wave=1):
             if gs.net_mode != "client":
                 if wave_active:
                     if enemies_spawned < enemies_to_spawn:
-                        spawn_timer += 1
+                        spawn_timer += dt
                         # Spawn faster at higher waves
                         spawn_delay = max(4, int(BASE_SPAWN_DELAY - current_wave * 0.3))
                         if spawn_timer >= spawn_delay:
@@ -924,7 +928,7 @@ def run_game(class_key, starting_wave=1):
                     fire_cooldown = player_obj.stats["fire_rate"]
                     sounds.play_shoot()
             else:
-                fire_cooldown -= 1
+                fire_cooldown -= dt
 
             # ---- COLLISIONS ----
 
@@ -2115,7 +2119,10 @@ def run_game(class_key, starting_wave=1):
                 net_txt = small_font.render(f"Client | {status}", True, color)
             surf.blit(net_txt, (sw - 200, 105))
 
-        pygame.display.flip()
-        clock.tick(FPS)
+        display_mgr.present()
+        if settings_module.FPS > 0:
+            clock.tick(settings_module.FPS)
+        else:
+            clock.tick(0)  # Unlimited
 
     return "main_menu"

@@ -10,6 +10,7 @@ from core.game_state import (
     MSG_UPGRADE_PAUSE, MSG_UPGRADE_RESUME
 )
 from ui.hud import draw_enemy_health_bars
+
 from networking.net_common import MSG_UPGRADE_DONE
 
 _STAT_MAP = {
@@ -125,7 +126,7 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
     t = 0.0
     hues = [(0,255,255),(57,255,20),(0,180,255),(255,50,200),(255,200,50)]
     global _auto_upgrade_on
-    auto_timer = 0  # counts up each frame when auto is on (60 = 2 sec at 30fps)
+    auto_timer = 0  # counts up each frame when auto is on (120 = 2 sec at 60fps)
 
     while True:
         sw, sh = settings_module.SCREEN_WIDTH, settings_module.SCREEN_HEIGHT
@@ -137,8 +138,9 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
         all_spr.draw(surf)
         draw_enemy_health_bars(surf, enemy_grp)
 
-        ov = pygame.Surface((sw, sh), pygame.SRCALPHA)
-        ov.fill((0,0,8,215))
+        ov = pygame.Surface((sw, sh))
+        ov.fill((0,0,8))
+        ov.set_alpha(215)
         surf.blit(ov, (0,0))
 
         # Title
@@ -146,9 +148,7 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
         ts = "BIG UPGRADE!" if is_big else "LEVEL UP!"
         tt = header_font.render(ts, True, tc)
         pulse = math.sin(t*3)*0.3+0.7
-        tg = pygame.Surface((tt.get_width()+24, tt.get_height()+8), pygame.SRCALPHA)
-        tg.fill((*tc[:3], int(15*pulse)))
-        surf.blit(tg, (sw//2-tg.get_width()//2, 16))
+        # Title (no glow surface)
         surf.blit(tt, (sw//2-tt.get_width()//2, 20))
 
         lv = small_font.render(f"Level {player_obj.level}", True, (70,80,100))
@@ -156,8 +156,8 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
 
         # Cards — tall vertical, side by side
         num = len(options)
-        card_w = min(190, (sw - 40) // num - 10)
-        card_h = min(340, sh - 120)
+        card_w = min(int(sw * 0.14), (sw - 40) // num - 10)
+        card_h = min(int(sh * 0.7), sh - 140)
         gap = 10
         total_w = num * card_w + (num-1) * gap
         sx = sw//2 - total_w//2
@@ -173,25 +173,23 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
             bc = GOLD if is_big else hues[i % len(hues)]
 
             # BG
-            bg = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
-            bg.fill((*bc[:3], 38 if hov else 10))
+            bg = pygame.Surface((card_w, card_h))
+            bg.fill(bc)
+            bg.set_alpha(38 if hov else 10)
             surf.blit(bg, (cx, cy))
 
             # Top accent
             pygame.draw.rect(surf, bc, (cx, cy, card_w, 3))
 
             # Glow border
-            gr = 7 if hov else 2
-            for gi in range(gr, 0, -1):
-                a = int((18 if hov else 5) * gi/gr)
-                pygame.draw.rect(surf, (*bc[:3], a), (cx-gi,cy-gi,card_w+gi*2,card_h+gi*2), 2, border_radius=6)
+            # Simple border, no glow loop
             pygame.draw.rect(surf, WHITE if hov else bc, cr, 2 if not hov else 3, border_radius=6)
 
             # Icon
-            _draw_upgrade_icon(surf, cx+card_w//2, cy+35, opt["key"], bc, r=18)
+            _draw_upgrade_icon(surf, cx+card_w//2, cy+card_h//8, opt["key"], bc, r=min(18, card_w//10))
 
             # Name (word-wrapped)
-            ny = cy + 60
+            ny = cy + card_h//5
             words = opt["name"].split(); lines = []; cur = ""
             for w in words:
                 test = cur+" "+w if cur else w
@@ -215,8 +213,8 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
                 surf.blit(dt, (cx+card_w//2-dt.get_width()//2, dy+j*16))
 
             # ── Bottom stat section
-            bsy = cy + card_h - 75
-            pygame.draw.line(surf, (*bc[:3], 35), (cx+10, bsy), (cx+card_w-10, bsy), 1)
+            bsy = cy + card_h - min(75, card_h//4)
+            pygame.draw.line(surf, (40,40,55), (cx+10, bsy), (cx+card_w-10, bsy), 1)
 
             base_key = opt["key"].replace("big_","")
             stat_info = _STAT_MAP.get(base_key, (base_key.upper()[:5], (180,180,200)))
@@ -236,29 +234,26 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
             if count > 0:
                 badge = small_font.render(f"x{count}", True, bc)
                 bw2 = badge.get_width()+8
-                bbg = pygame.Surface((bw2,18), pygame.SRCALPHA)
-                bbg.fill((*bc[:3], 25))
+                bbg = pygame.Surface((bw2,18))
+                bbg.fill(bc)
+                bbg.set_alpha(25)
                 surf.blit(bbg, (cx+card_w-bw2-4, cy+7))
-                pygame.draw.rect(surf, (*bc[:3], 50), (cx+card_w-bw2-4,cy+7,bw2,18), 1, border_radius=3)
+                pygame.draw.rect(surf, bc, (cx+card_w-bw2-4,cy+7,bw2,18), 1, border_radius=3)
                 surf.blit(badge, (cx+card_w-bw2, cy+8))
 
-            # Hover shimmer
+            # Hover highlight line
             if hov:
-                shim = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
                 shy = int((math.sin(t*5)*0.5+0.5)*card_h)
-                for ddy in range(-6,7):
-                    a_s = max(0, 12-abs(ddy)*2)
-                    if 0 <= shy+ddy < card_h:
-                        pygame.draw.line(shim, (*bc[:3], a_s), (0,shy+ddy), (card_w,shy+ddy))
-                surf.blit(shim, (cx, cy))
+                pygame.draw.line(surf, bc, (cx+2, cy+shy), (cx+card_w-2, cy+shy), 1)
 
         # Auto-upgrade toggle + timer
         auto_w, auto_h = 200, 34
         auto_rect = pygame.Rect(sw//2 - auto_w//2, sh - 56, auto_w, auto_h)
         auto_hov = auto_rect.collidepoint(mx, my)
         ac = (57, 255, 20) if _auto_upgrade_on else (255, 200, 50)
-        ab = pygame.Surface((auto_w, auto_h), pygame.SRCALPHA)
-        ab.fill((*ac, 30 if auto_hov or _auto_upgrade_on else 10))
+        ab = pygame.Surface((auto_w, auto_h))
+        ab.fill(ac)
+        ab.set_alpha(30 if auto_hov or _auto_upgrade_on else 10)
         surf.blit(ab, auto_rect.topleft)
         pygame.draw.rect(surf, ac if auto_hov or _auto_upgrade_on else (120, 110, 60),
                          auto_rect, 2 if auto_hov else 1, border_radius=5)
@@ -270,41 +265,28 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
         if _auto_upgrade_on:
             auto_timer += 1
             bar_w = auto_w - 8
-            bar_ratio = min(1.0, auto_timer / 60.0)  # 60 frames = 2 sec at 30fps
+            bar_ratio = min(1.0, auto_timer / 120.0)  # 120 frames = 2 sec at 60fps
             bar_y = auto_rect.bottom + 2
             pygame.draw.rect(surf, (30, 30, 40), (auto_rect.x + 4, bar_y, bar_w, 6), border_radius=3)
             if bar_ratio > 0:
                 pygame.draw.rect(surf, ac, (auto_rect.x + 4, bar_y, int(bar_w * bar_ratio), 6), border_radius=3)
             # Countdown text
-            secs_left = max(0, 2.0 - auto_timer / 30.0)
+            secs_left = max(0, 2.0 - auto_timer / 60.0)
             ct = desc_font.render(f"{secs_left:.1f}s", True, ac)
             surf.blit(ct, (auto_rect.right + 4, bar_y - 2))
 
             # Auto-pick after 2 seconds
-            if auto_timer >= 60:
+            if auto_timer >= 120:
                 _pick(random.randint(0, len(options)-1)); return
         else:
             auto_timer = 0
 
-        # Keybind badges on cards (top-left corner)
-        for i, rect in enumerate(rects):
-            if i < 5:
-                key_str = str(i + 1)
-                # Badge background
-                bw2, bh2 = 22, 22
-                bx2 = rect.x + 4
-                by2 = rect.y + 4
-                badge = pygame.Surface((bw2, bh2), pygame.SRCALPHA)
-                badge.fill((255, 255, 255, 20))
-                pygame.draw.rect(badge, (255, 255, 255, 60), (0, 0, bw2, bh2), 1, border_radius=4)
-                surf.blit(badge, (bx2, by2))
-                nl = menu_font.render(key_str, True, (200, 210, 225))
-                surf.blit(nl, (bx2 + bw2//2 - nl.get_width()//2, by2 + bh2//2 - nl.get_height()//2))
+
 
         hint = small_font.render("Click or press 1-5  |  A = toggle auto", True, (38,40,52))
         surf.blit(hint, (sw//2-hint.get_width()//2, sh-20))
 
-        pygame.display.flip()
+        display_mgr.present()
 
         def _pick(idx):
             player_obj.apply_upgrade(options[idx]["key"])
@@ -334,4 +316,4 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
                     for i, rect in enumerate(rects):
                         if rect.collidepoint(ev.pos):
                             _pick(i); return
-        clock.tick(30)
+        clock.tick(settings_module.FPS or 0)
