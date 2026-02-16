@@ -306,9 +306,78 @@ class PlayerBase(pygame.sprite.Sprite):
             self.stats["accuracy"] = round(self.stats["accuracy"] + 0.6, 2)
             self.upgrade_counts["accuracy"] += 3
 
+        # ---- Class-specific upgrades ----
+        # Default (Survivor)
+        elif upgrade_key == "balanced_boost":
+            self.stats["damage"] += 1; self.stats["speed"] += 1
+            self.stats["max_health"] += 10; self.current_health += 10
+        elif upgrade_key == "survival_instinct":
+            self.stats["max_health"] += 30; self.current_health += 30
+            self.stats["speed"] += 1
+        elif upgrade_key == "big_balanced":
+            self.stats["damage"] += 3; self.stats["speed"] += 3
+            self.stats["max_health"] += 20; self.current_health += 20
+
+        # Tank
+        elif upgrade_key == "ram_damage":
+            self.stats["damage"] += 2  # Ram uses damage stat
+        elif upgrade_key == "fortress":
+            self.stats["max_health"] += 50; self.current_health += 50
+            self.stats["damage"] += 1
+            self.stats["speed"] = max(1, self.stats["speed"] - 1)
+        elif upgrade_key == "big_ram":
+            self.stats["damage"] += 4
+            self.stats["max_health"] += 100; self.current_health += 100
+
+        # Laser (Arcanist)
+        elif upgrade_key == "beam_width":
+            self.stats["bullet_size"] = round(self.stats["bullet_size"] + 0.4, 2)
+        elif upgrade_key == "beam_bounce":
+            self.stats["bullet_bounces"] = self.stats.get("bullet_bounces", 0) + 1
+        elif upgrade_key == "big_beam":
+            self.stats["bullet_size"] = round(self.stats["bullet_size"] + 1.0, 2)
+            self.stats["bullet_bounces"] = self.stats.get("bullet_bounces", 0) + 2
+            self.stats["damage"] += 3
+
+        # Gunner
+        elif upgrade_key == "bullet_storm":
+            self.stats["multishot"] += 2
+            self.stats["fire_rate"] = max(1, int(self.stats["fire_rate"] * 0.8))
+        elif upgrade_key == "explosive_rounds":
+            self.stats["damage"] += 1
+            self.stats["piercing"] += 2
+        elif upgrade_key == "big_storm":
+            self.stats["multishot"] += 4
+            self.stats["fire_rate"] = max(1, int(self.stats["fire_rate"] * 0.6))
+
+        # Sniper
+        elif upgrade_key == "headshot":
+            if hasattr(self, 'crit_chance'):
+                self.crit_chance = min(1.0, self.crit_chance + 0.30)
+            self.stats["damage"] += 2
+        elif upgrade_key == "long_range":
+            self.stats["bullet_speed"] += 5
+            self.stats["piercing"] += 2
+        elif upgrade_key == "big_snipe":
+            self.stats["damage"] += 5
+            self.stats["piercing"] += 3
+
+        # Paladin
+        elif upgrade_key == "holy_aura":
+            self.stats["damage"] += 1
+        elif upgrade_key == "divine_shield":
+            self.stats["max_health"] += 40; self.current_health += 40
+        elif upgrade_key == "big_divine":
+            self.stats["max_health"] += 80; self.current_health += 80
+            self.stats["damage"] += 2
+
     def get_weapon_type(self):
         """Override in subclass. Returns 'bullet', 'laser', 'ram', etc."""
         return "bullet"
+
+    def get_bullet_color(self):
+        """Override in subclass for unique bullet visuals."""
+        return (255, 255, 0)  # Default yellow
 
     def draw_magnet_ring(self, surf):
         """Draw the magnet radius as a neon ring."""

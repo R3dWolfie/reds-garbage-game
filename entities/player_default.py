@@ -29,3 +29,6 @@ class PlayerDefault(PlayerBase):
 
     def get_weapon_type(self):
         return "bullet"
+
+    def get_bullet_color(self):
+        return (57, 255, 20)  # Green

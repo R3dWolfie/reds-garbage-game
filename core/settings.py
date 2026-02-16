@@ -14,6 +14,7 @@ DEFAULT_CONFIG = {
     "music_volume": 0.5,
     "username": "Player",
     "mouse_move": False,
+    "keybinds": {},
     "gold": 0,
     "highest_wave": 1,
     "equipped_hat": None,
@@ -182,7 +183,54 @@ BIG_UPGRADE_POOL = [
     {"key": "big_accuracy",     "name": "★ Laser Accuracy",           "desc": "Extremely tight cone spread"},
 ]
 
-# Class Definitions (for selection screen)
+# Per-class special upgrades — only appear for matching class
+CLASS_UPGRADES = {
+    "default": [
+        {"key": "balanced_boost",  "name": "Balanced Boost",      "desc": "All stats +1"},
+        {"key": "survival_instinct","name": "Survival Instinct",  "desc": "+30 HP, +1 speed on low health"},
+    ],
+    "tank": [
+        {"key": "ram_damage",      "name": "Ram Force +50%",      "desc": "Collision damage increased"},
+        {"key": "fortress",        "name": "Fortress",            "desc": "+50 HP, +1 damage, -1 speed"},
+    ],
+    "laser": [
+        {"key": "beam_width",      "name": "Beam Width +40%",     "desc": "Wider beam hits more enemies"},
+        {"key": "beam_bounce",     "name": "Beam Bounce +1",      "desc": "Beam bounces off screen edges"},
+    ],
+    "gunner": [
+        {"key": "bullet_storm",    "name": "Bullet Storm",        "desc": "+2 multishot, +20% fire rate"},
+        {"key": "explosive_rounds","name": "Explosive Rounds",    "desc": "Bullets deal AoE on hit"},
+    ],
+    "sniper": [
+        {"key": "headshot",        "name": "Headshot",            "desc": "+30% crit chance, +50% crit damage"},
+        {"key": "long_range",      "name": "Long Range",          "desc": "+5 bullet speed, +2 piercing"},
+    ],
+    "paladin": [
+        {"key": "holy_aura",       "name": "Holy Aura",           "desc": "Nearby enemies take 1 dps"},
+        {"key": "divine_shield",   "name": "Divine Shield",       "desc": "+40 HP, heal 2 HP/sec"},
+    ],
+}
+
+BIG_CLASS_UPGRADES = {
+    "default": [
+        {"key": "big_balanced",    "name": "★ Omni Boost",        "desc": "All stats +3, +20 HP"},
+    ],
+    "tank": [
+        {"key": "big_ram",         "name": "★ Juggernaut Rush",   "desc": "Ram damage x2, +100 HP"},
+    ],
+    "laser": [
+        {"key": "big_beam",        "name": "★ Mega Beam",         "desc": "Beam width x2, +2 bounces, +3 dmg"},
+    ],
+    "gunner": [
+        {"key": "big_storm",       "name": "★ Lead Rain",         "desc": "+4 multishot, +40% fire rate"},
+    ],
+    "sniper": [
+        {"key": "big_snipe",       "name": "★ Assassinate",       "desc": "+100% crit damage, +3 piercing"},
+    ],
+    "paladin": [
+        {"key": "big_divine",      "name": "★ Divine Wrath",      "desc": "+80 HP, heal 5 HP/sec, +2 damage"},
+    ],
+}
 CLASS_INFO = {
     "default": {
         "name": "Survivor",
@@ -233,17 +281,17 @@ GOLD_BOSS_VALUE = 10
 PERMA_SHOP_ITEMS = [
     {
         "key": "roomba_count",
-        "name": "XP Roomba",
-        "desc": "Orbital roomba that auto-collects XP gems",
+        "name": "XP Vacuumbot",
+        "desc": "Orbital vacuumbot that auto-collects XP gems",
         "icon_color": CYAN,
         "max_level": 15,
         "costs": [10, 25, 50, 100, 200, 350, 550, 800, 1100, 1500, 2000, 2800, 3800, 5000, 7000],
-        "stat_per_level": "+1 roomba",
+        "stat_per_level": "+1 vacuumbot",
     },
     {
         "key": "roomba_speed",
-        "name": "Roomba Speed",
-        "desc": "Roombas orbit faster and cover more ground",
+        "name": "Vacuumbot Speed",
+        "desc": "Vacuumbots orbit faster and cover more ground",
         "icon_color": (0, 200, 200),
         "max_level": 10,
         "costs": [8, 18, 35, 70, 140, 240, 380, 560, 800, 1100],
@@ -350,8 +398,8 @@ PERMA_SHOP_ITEMS = [
     },
     {
         "key": "roomba_range",
-        "name": "Roomba Range",
-        "desc": "Roombas scan further and roam further from you",
+        "name": "Vacuumbot Range",
+        "desc": "Vacuumbots scan further and roam further from you",
         "icon_color": (0, 220, 180),
         "max_level": 10,
         "costs": [10, 22, 45, 90, 180, 320, 500, 750, 1100, 1600],
@@ -359,8 +407,8 @@ PERMA_SHOP_ITEMS = [
     },
     {
         "key": "roomba_damage",
-        "name": "Roomba Zap",
-        "desc": "Roombas zap nearby enemies for damage on contact",
+        "name": "Vacuumbot Zap",
+        "desc": "Vacuumbots zap nearby enemies for damage on contact",
         "icon_color": (0, 255, 200),
         "max_level": 10,
         "costs": [15, 35, 65, 110, 180, 280, 420, 600, 850, 1200],
@@ -522,12 +570,12 @@ HAT_DEFS = [
     {"id": "toxicmask",     "name": "Toxic Mask",       "rarity": "epic",      "source": "boss",    "color": (80, 220, 0),    "anim": "toxic_bubble"},
     {"id": "magichat",      "name": "Arcane Hat",       "rarity": "epic",      "source": "boss",    "color": (200, 100, 255), "anim": "magic_orbit"},
     # ═══ LEGENDARY (animated: intense multi-effect) ═══
-    {"id": "omegahat",      "name": "Omega Halo",       "rarity": "legendary", "source": "boss_100","color": (255, 200, 255), "anim": "rainbow_halo"},
-    {"id": "shadowhat",     "name": "Shadow Veil",      "rarity": "legendary", "source": "boss_90", "color": (60, 60, 80),    "anim": "shadow_tendrils"},
-    {"id": "galaxyhat",     "name": "Galaxy Crown",     "rarity": "legendary", "source": "boss",    "color": (100, 50, 200),  "anim": "galaxy_swirl"},
-    {"id": "glitchhat",     "name": "Glitch Mask",      "rarity": "legendary", "source": "boss",    "color": (255, 0, 255),   "anim": "glitch"},
-    {"id": "phoenixhat",    "name": "Phoenix Plume",    "rarity": "legendary", "source": "boss",    "color": (255, 120, 0),   "anim": "phoenix_fire"},
-    {"id": "cosmichat",     "name": "Cosmic Crown",     "rarity": "legendary", "source": "boss",    "color": (180, 100, 255), "anim": "cosmic_rings"},
+    {"id": "omegahat",      "name": "Omega Halo",       "rarity": "exotic", "source": "boss_100","color": (255, 200, 255), "anim": "rainbow_halo"},
+    {"id": "shadowhat",     "name": "Shadow Veil",      "rarity": "exotic", "source": "boss_90", "color": (60, 60, 80),    "anim": "shadow_tendrils"},
+    {"id": "galaxyhat",     "name": "Galaxy Crown",     "rarity": "exotic", "source": "boss",    "color": (100, 50, 200),  "anim": "galaxy_swirl"},
+    {"id": "glitchhat",     "name": "Glitch Mask",      "rarity": "exotic", "source": "boss",    "color": (255, 0, 255),   "anim": "glitch"},
+    {"id": "phoenixhat",    "name": "Phoenix Plume",    "rarity": "exotic", "source": "boss",    "color": (255, 120, 0),   "anim": "phoenix_fire"},
+    {"id": "cosmichat",     "name": "Cosmic Crown",     "rarity": "exotic", "source": "boss",    "color": (180, 100, 255), "anim": "cosmic_rings"},
 ]
 
 HAT_DROP_CHANCES = {
@@ -536,6 +584,7 @@ HAT_DROP_CHANCES = {
     "rare":      0.002,   # 0.2%
     "epic":      0.0,     # Only from specific bosses
     "legendary": 0.0,     # Only from specific bosses
+    "exotic":    0.0,     # Only from specific bosses
 }
 
 HAT_BOSS_DROP_CHANCES = {
@@ -544,6 +593,7 @@ HAT_BOSS_DROP_CHANCES = {
     "rare":      0.06,
     "epic":      0.04,
     "legendary": 0.02,
+    "exotic":    0.01,
 }
 
 RARITY_COLORS = {
@@ -552,6 +602,7 @@ RARITY_COLORS = {
     "rare":      (0, 180, 255),
     "epic":      (180, 50, 255),
     "legendary": (255, 200, 50),
+    "exotic":    (255, 60, 120),
 }
 
 def get_dt():

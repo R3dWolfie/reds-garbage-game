@@ -11,7 +11,7 @@ import sys
 from core.game_state import display_mgr, gs
 
 # Import screens
-from ui.menus import show_main_menu, show_class_selection
+from ui.menus import show_main_menu, show_class_selection, show_play_mode
 from ui.multiplayer_menus import show_multiplayer_menu, show_lobby
 from game.loop import run_game
 
@@ -36,49 +36,61 @@ def main():
         result = show_main_menu()
 
         if result == "play":
-            gs.net_mode = None
-            class_key, starting_wave = show_class_selection()
-            gs.remote_players = {}
-            gs.remote_enemies = {}
-            game_result = run_game(class_key, starting_wave)
-            if game_result == "restart":
+            play_mode = show_play_mode()
+
+            if play_mode == "back":
                 continue
 
-        elif result == "multiplayer":
-            mode, net_obj = show_multiplayer_menu()
-
-            if mode == "back":
-                continue
-
-            if mode in ("host", "client"):
-                lobby_result = show_lobby()
-
-                if lobby_result == "leave":
-                    if gs.net_host:
-                        gs.net_host.stop()
-                        gs.net_host = None
-                    if gs.net_client:
-                        gs.net_client.disconnect()
-                        gs.net_client = None
-                    gs.net_mode = None
+            if play_mode == "singleplayer":
+                gs.net_mode = None
+                result = show_class_selection()
+                if result[0] == "back":
+                    continue
+                class_key, starting_wave = result
+                gs.remote_players = {}
+                gs.remote_enemies = {}
+                game_result = run_game(class_key, starting_wave)
+                if game_result == "restart":
                     continue
 
-                if lobby_result == "start":
-                    class_key, starting_wave = show_class_selection()
-                    gs.remote_players = {}
-                    gs.remote_enemies = {}
-                    game_result = run_game(class_key, starting_wave)
+            elif play_mode == "multiplayer":
+                mode, net_obj = show_multiplayer_menu()
 
-                    if gs.net_host:
-                        gs.net_host.stop()
-                        gs.net_host = None
-                    if gs.net_client:
-                        gs.net_client.disconnect()
-                        gs.net_client = None
-                    gs.net_mode = None
+                if mode == "back":
+                    continue
 
-                    if game_result == "restart":
+                if mode in ("host", "client"):
+                    lobby_result = show_lobby()
+
+                    if lobby_result == "leave":
+                        if gs.net_host:
+                            gs.net_host.stop()
+                            gs.net_host = None
+                        if gs.net_client:
+                            gs.net_client.disconnect()
+                            gs.net_client = None
+                        gs.net_mode = None
                         continue
+
+                    if lobby_result == "start":
+                        result = show_class_selection()
+                        if result[0] == "back":
+                            continue
+                        class_key, starting_wave = result
+                        gs.remote_players = {}
+                        gs.remote_enemies = {}
+                        game_result = run_game(class_key, starting_wave)
+
+                        if gs.net_host:
+                            gs.net_host.stop()
+                            gs.net_host = None
+                        if gs.net_client:
+                            gs.net_client.disconnect()
+                            gs.net_client = None
+                        gs.net_mode = None
+
+                        if game_result == "restart":
+                            continue
 
 
 if __name__ == "__main__":

@@ -1,16 +1,23 @@
 # hat_menu.py
-"""Hat collection and equip menu."""
+"""Hat collection and equip menu — global standards, click-to-unequip."""
 
 import pygame, sys, math
 import core.settings as settings_module
 from core.settings import HAT_DEFS, RARITY_COLORS, save_config
 from core.game_state import (
-    display_mgr, clock, font, small_font, title_font, menu_font, header_font, desc_font
+    display_mgr, clock, small_font, menu_font, header_font, desc_font, title_font
 )
 
-
-
+# ── Shared colors ──
+ACCENT = (0, 200, 255)
+BG_DARK = (5, 6, 16)
+TEXT_DIM = (60, 65, 80)
+TEXT_MID = (130, 140, 160)
+TEXT_BRIGHT = (220, 225, 240)
+BORDER = (35, 40, 60)
 WHITE = (255, 255, 255)
+
+RARITY_ORDER = {"exotic": 0, "legendary": 1, "epic": 2, "rare": 3, "uncommon": 4, "common": 5}
 
 
 def _draw_hat_preview(surf, cx, cy, hat_id, hat_color, sz=28):
@@ -59,7 +66,7 @@ def _draw_hat_preview(surf, cx, cy, hat_id, hat_color, sz=28):
         pygame.draw.line(surf, c, (cx-8, cy), (cx-12, top-2), 3)
         pygame.draw.line(surf, c, (cx+8, cy), (cx+12, top-2), 3)
     elif hid == "halo":
-        pygame.draw.ellipse(surf, (*c, 180), (cx-r, top, sz, r//2), 2)
+        pygame.draw.ellipse(surf, c, (cx-r, top, sz, r//2), 2)
     elif hid == "crown":
         pts = [(cx-r+2, cy), (cx-r+2, top+4), (cx-r//2, cy-4), (cx, top),
                (cx+r//2, cy-4), (cx+r-2, top+4), (cx+r-2, cy)]
@@ -87,9 +94,7 @@ def _draw_hat_preview(surf, cx, cy, hat_id, hat_color, sz=28):
         for i, rc in enumerate(colors):
             pygame.draw.arc(surf, rc, (cx-r-i, top-i, sz+i*2, r//2+i*2), 0, math.pi, 2)
     elif hid == "shadowhat":
-        vs = pygame.Surface((sz+4, r+4), pygame.SRCALPHA)
-        vs.fill((*c, 80))
-        surf.blit(vs, (cx-r-2, top-2))
+        pygame.draw.rect(surf, c, (cx-r, top, sz, r))
     elif hid == "hardhat":
         pygame.draw.arc(surf, c, (cx-r, top, sz, r), 0, math.pi, 3)
         pygame.draw.rect(surf, c, (cx-r-2, cy-1, sz+4, 3))
@@ -104,7 +109,6 @@ def _draw_hat_preview(surf, cx, cy, hat_id, hat_color, sz=28):
     elif hid == "bow":
         pygame.draw.polygon(surf, c, [(cx-r, cy-1), (cx-3, cy-4), (cx-3, cy+2)])
         pygame.draw.polygon(surf, c, [(cx+r, cy-1), (cx+3, cy-4), (cx+3, cy+2)])
-        pygame.draw.circle(surf, (min(255,c[0]+40),min(255,c[1]+40),min(255,c[2]+40)), (cx, cy-1), 2)
     elif hid == "earmuffs":
         pygame.draw.arc(surf, c, (cx-r, top, sz, r//2), 0, math.pi, 2)
         pygame.draw.circle(surf, c, (cx-r, cy), 4)
@@ -112,7 +116,6 @@ def _draw_hat_preview(surf, cx, cy, hat_id, hat_color, sz=28):
     elif hid == "fez":
         pygame.draw.rect(surf, c, (cx-r//2, top, r, r), border_radius=2)
         pygame.draw.rect(surf, c, (cx-r//2-2, cy-1, r+4, 2))
-        pygame.draw.circle(surf, (255,215,0), (cx+r//2+2, top-1), 2)
     elif hid == "pirate":
         pygame.draw.arc(surf, c, (cx-r, top, sz, r), 0, math.pi, 3)
         pygame.draw.rect(surf, c, (cx-r-2, cy-1, sz+4, 3))
@@ -126,8 +129,8 @@ def _draw_hat_preview(surf, cx, cy, hat_id, hat_color, sz=28):
             h2 = 10 - abs(i)
             pygame.draw.line(surf, c, (cx+i, cy), (cx+i, cy-h2), 2)
     elif hid == "flower":
-        colors = [(255,120,180),(255,200,100),(180,100,255),(100,200,255),(255,150,100)]
-        for i, fc in enumerate(colors):
+        fcolors = [(255,120,180),(255,200,100),(180,100,255),(100,200,255),(255,150,100)]
+        for i, fc in enumerate(fcolors):
             a = (i / 5) * math.pi * 2 - math.pi/2
             fx = cx + int(8 * math.cos(a))
             fy = cy-3 + int(5 * math.sin(a))
@@ -149,36 +152,23 @@ def _draw_hat_preview(surf, cx, cy, hat_id, hat_color, sz=28):
     elif hid == "mushroom":
         pygame.draw.ellipse(surf, c, (cx-r, top, sz, r))
         pygame.draw.rect(surf, (220,200,180), (cx-3, cy-2, 6, 4), border_radius=1)
-        pygame.draw.circle(surf, (255,255,255), (cx-4, top+3), 2)
     elif hid == "samurai":
         pygame.draw.arc(surf, c, (cx-r, top+2, sz, r), 0, math.pi, 3)
         pygame.draw.polygon(surf, (200,170,0), [(cx, top-4), (cx-3, top+4), (cx+3, top+4)])
     elif hid == "disco":
         pygame.draw.circle(surf, c, (cx, cy-4), r//2+2)
-        for i in range(4):
-            a = (i / 4) * math.pi * 2
-            sx2 = cx + int(4 * math.cos(a))
-            sy2 = cy-4 + int(4 * math.sin(a))
-            pygame.draw.circle(surf, [(255,255,100),(100,255,255),(255,100,255),(255,200,100)][i], (sx2, sy2), 1)
     elif hid == "hydrahat":
         for off in [-6, 0, 6]:
             pygame.draw.line(surf, c, (cx+off, cy), (cx+off, top), 2)
             pygame.draw.circle(surf, c, (cx+off, top), 2)
     elif hid == "phantomhat":
-        vs = pygame.Surface((sz, r), pygame.SRCALPHA)
-        vs.fill((*c, 60))
-        surf.blit(vs, (cx-r, top))
-        pygame.draw.circle(surf, (*c, 150), (cx-4, cy-4), 2)
-        pygame.draw.circle(surf, (*c, 150), (cx+4, cy-4), 2)
+        pygame.draw.rect(surf, c, (cx-r, top, sz, r))
     elif hid == "fortresshat":
         pygame.draw.rect(surf, c, (cx-r, cy-3, sz, 6))
         for bx in range(-r+1, r, 5):
             pygame.draw.rect(surf, c, (cx+bx, cy-7, 3, 4))
     elif hid == "neonhat":
-        pygame.draw.rect(surf, (*c, 180), (cx-r, cy-3, sz, 5), border_radius=2)
-        gs2 = pygame.Surface((sz+4, 10), pygame.SRCALPHA)
-        pygame.draw.rect(gs2, (*c, 40), (0, 0, sz+4, 10), border_radius=4)
-        surf.blit(gs2, (cx-r-2, cy-6))
+        pygame.draw.rect(surf, c, (cx-r, cy-3, sz, 5), border_radius=2)
     elif hid == "galaxyhat":
         pygame.draw.circle(surf, c, (cx, cy-4), r//2+2)
         pygame.draw.circle(surf, (255,255,200), (cx, cy-4), 2)
@@ -193,7 +183,6 @@ def _draw_hat_preview(surf, cx, cy, hat_id, hat_color, sz=28):
     elif hid == "backwards_cap":
         pygame.draw.rect(surf, c, (cx-r, cy-2, sz, 5), border_radius=2)
         pygame.draw.rect(surf, c, (cx-r+3, top+2, sz-6, r-2), border_radius=3)
-        pygame.draw.line(surf, c, (cx+r-2, cy-2), (cx+r+4, cy+1), 2)
     elif hid == "nightcap":
         pygame.draw.arc(surf, c, (cx-r+4, top, sz-8, r), 0, math.pi, 3)
         pygame.draw.line(surf, c, (cx+r-4, top+r//3), (cx+r+2, top-2), 2)
@@ -219,10 +208,8 @@ def _draw_hat_preview(surf, cx, cy, hat_id, hat_color, sz=28):
     elif hid == "antlers":
         pygame.draw.line(surf, c, (cx-6, cy), (cx-9, top), 2)
         pygame.draw.line(surf, c, (cx-9, top), (cx-12, top+3), 1)
-        pygame.draw.line(surf, c, (cx-9, top), (cx-6, top-3), 1)
         pygame.draw.line(surf, c, (cx+6, cy), (cx+9, top), 2)
         pygame.draw.line(surf, c, (cx+9, top), (cx+12, top+3), 1)
-        pygame.draw.line(surf, c, (cx+9, top), (cx+6, top-3), 1)
     elif hid == "tiara":
         pygame.draw.arc(surf, c, (cx-r+2, top+2, sz-4, r-2), 0, math.pi, 2)
         pygame.draw.circle(surf, (255,200,255), (cx, top+3), 2)
@@ -231,7 +218,7 @@ def _draw_hat_preview(surf, cx, cy, hat_id, hat_color, sz=28):
                (cx+r//2,cy-2),(cx+r-2,top+3),(cx+r-2,cy)]
         pygame.draw.polygon(surf, c, pts)
     elif hid == "soulflame":
-        for i in range(-6,8,3):
+        for i in range(-6, 8, 3):
             h2 = 6 + abs(i) % 4
             pygame.draw.line(surf, c, (cx+i, cy), (cx+i, cy-h2), 2)
     elif hid == "thunderhelm":
@@ -249,7 +236,7 @@ def _draw_hat_preview(surf, cx, cy, hat_id, hat_color, sz=28):
     elif hid == "phoenixhat":
         for off in [-4,-2,0,2,4]:
             h2 = 10 - abs(off)*2
-            fc = (255, max(80,160-abs(off)*30), 0)
+            fc = (255, max(80, 160-abs(off)*30), 0)
             pygame.draw.line(surf, fc, (cx+off, cy), (cx+off, cy-h2), 2)
     elif hid == "cosmichat":
         pygame.draw.circle(surf, c, (cx, cy-3), r//2+3)
@@ -259,127 +246,144 @@ def _draw_hat_preview(surf, cx, cy, hat_id, hat_color, sz=28):
         pygame.draw.circle(surf, c, (cx, cy-4), r//2, 2)
 
 
+def _back_btn(surf, mx, my):
+    r = pygame.Rect(16, 16, 90, 34)
+    hov = r.collidepoint(mx, my)
+    c = ACCENT if hov else TEXT_DIM
+    pygame.draw.rect(surf, c, r, 1 if not hov else 2, border_radius=5)
+    t = small_font.render("< Back", True, TEXT_BRIGHT if hov else TEXT_MID)
+    surf.blit(t, (r.centerx - t.get_width()//2, r.centery - t.get_height()//2))
+    return r
+
+
 def show_hat_menu():
-    """Show hat collection with equip ability."""
-    t = 0.0
+    """Show hat collection with click-to-equip/unequip."""
     scroll = 0
     equipped = settings_module.config.get("equipped_hat", None)
     collected = settings_module.config.get("collected_hats", [])
 
-    # Sort: collected first, by rarity
-    rarity_order = {"legendary": 0, "epic": 1, "rare": 2, "uncommon": 3, "common": 4}
-    hats = sorted(HAT_DEFS, key=lambda h: (0 if h["id"] in collected else 1, rarity_order.get(h["rarity"], 5)))
+    # Filter out "none", sort: owned first, then by rarity
+    hats = [h for h in HAT_DEFS if h["id"] != "none"]
+    hats.sort(key=lambda h: (0 if h["id"] in collected else 1, RARITY_ORDER.get(h["rarity"], 9)))
 
     while True:
-        t += 0.03
         sw, sh = settings_module.SCREEN_WIDTH, settings_module.SCREEN_HEIGHT
         surf = display_mgr.get_screen()
         mx, my = pygame.mouse.get_pos()
 
-        surf.fill((5, 5, 15))
+        surf.fill(BG_DARK)
 
-        # Title
-        tt = header_font.render("HAT COLLECTION", True, (255, 150, 200))
-        surf.blit(tt, (sw//2 - tt.get_width()//2, 16))
+        # ── Back button (universal, top-left) ──
+        back_r = _back_btn(surf, mx, my)
 
-        count = sum(1 for h in HAT_DEFS if h["id"] in collected and h["id"] != "none")
-        total = len(HAT_DEFS) - 1  # exclude "none"
-        ct = small_font.render(f"Collected: {count}/{total}", True, (100, 110, 130))
-        surf.blit(ct, (sw//2 - ct.get_width()//2, 50))
+        # ── Title ──
+        tt = menu_font.render("COSMETICS", True, TEXT_BRIGHT)
+        surf.blit(tt, (sw//2 - tt.get_width()//2, 20))
 
-        # Grid of hat cards
+        # ── Collected count (top-right) ──
+        count = sum(1 for h in hats if h["id"] in collected)
+        total = len(hats)
+        ct = small_font.render(f"{count}/{total} collected", True, TEXT_DIM)
+        surf.blit(ct, (sw - ct.get_width() - 20, 24))
+
+        # ── Grid ──
         card_w, card_h = 120, 100
         cols = max(1, (sw - 60) // (card_w + 10))
         gap = 10
-        grid_w = cols * card_w + (cols-1) * gap
-        gx = sw//2 - grid_w//2
-        gy = 70 - scroll
+        grid_w = cols * card_w + (cols - 1) * gap
+        gx = sw // 2 - grid_w // 2
+        gy = 54 - scroll
+
+        total_rows = (len(hats) + cols - 1) // cols
+        total_grid_h = total_rows * (card_h + gap)
+        max_scroll = max(0, total_grid_h - (sh - 100))
 
         rects = []
         for i, hat in enumerate(hats):
-            if hat["id"] == "none":
-                continue
             row, col = i // cols, i % cols
             cx = gx + col * (card_w + gap)
             cy = gy + row * (card_h + gap)
 
-            # Skip if off screen
-            if cy + card_h < 60 or cy > sh:
-                rects.append((pygame.Rect(0,0,0,0), hat))
-                continue
-
             cr = pygame.Rect(cx, cy, card_w, card_h)
             rects.append((cr, hat))
+
+            # Skip off-screen
+            if cy + card_h < 55 or cy > sh:
+                continue
+
             owned = hat["id"] in collected
             is_eq = hat["id"] == equipped
-            hov = cr.collidepoint(mx, my) and owned
-            rc = RARITY_COLORS.get(hat["rarity"], (180,180,190))
+            hov = cr.collidepoint(mx, my) and cy >= 55
+            rc = RARITY_COLORS.get(hat["rarity"], (180, 180, 190))
 
-            # Card bg
-            bg = pygame.Surface((card_w, card_h))
+            # Card background
             if not owned:
-                bg.fill((20, 20, 30))
-                bg.set_alpha(200)
+                pygame.draw.rect(surf, (15, 16, 26), cr, 0, border_radius=6)
+                border_c = (30, 32, 48)
             elif is_eq:
-                bg.fill(rc[:3])
-                bg.set_alpha(50)
+                pygame.draw.rect(surf, (15, 22, 35), cr, 0, border_radius=6)
+                border_c = rc
             elif hov:
-                bg.fill(rc[:3])
-                bg.set_alpha(30)
+                pygame.draw.rect(surf, (18, 22, 38), cr, 0, border_radius=6)
+                border_c = rc
             else:
-                bg.fill(rc[:3])
-                bg.set_alpha(12)
-            surf.blit(bg, (cx, cy))
+                pygame.draw.rect(surf, (12, 14, 26), cr, 0, border_radius=6)
+                border_c = BORDER
 
-            # Border
-            bc = rc if owned else (40, 40, 55)
-            bw = 3 if is_eq else (2 if hov else 1)
-            pygame.draw.rect(surf, bc, cr, bw, border_radius=6)
+            bw = 2 if (is_eq or hov) else 1
+            pygame.draw.rect(surf, border_c, cr, bw, border_radius=6)
 
+            # Equipped badge
             if is_eq:
-                # "EQUIPPED" badge
-                eb = small_font.render("EQUIPPED", True, rc)
-                surf.blit(eb, (cx + card_w//2 - eb.get_width()//2, cy + 2))
+                eb = desc_font.render("EQUIPPED", True, rc)
+                surf.blit(eb, (cx + card_w//2 - eb.get_width()//2, cy + 3))
 
             if owned:
-                # Draw hat preview
-                _draw_hat_preview(surf, cx + card_w//2, cy + 40, hat["id"], hat.get("color"), sz=30)
+                # Hat preview
+                _draw_hat_preview(surf, cx + card_w//2, cy + 42, hat["id"], hat.get("color"), sz=30)
                 # Name
                 nt = small_font.render(hat["name"], True, rc)
-                surf.blit(nt, (cx + card_w//2 - nt.get_width()//2, cy + 60))
+                surf.blit(nt, (cx + card_w//2 - nt.get_width()//2, cy + 62))
                 # Rarity
                 rt = desc_font.render(hat["rarity"].upper(), True, rc)
-                surf.blit(rt, (cx + card_w//2 - rt.get_width()//2, cy + 78))
-                # Animated badge
-                if hat.get("anim"):
-                    ab_t = desc_font.render("★ FX", True, (255,255,100))
-                    surf.blit(ab_t, (cx + card_w - ab_t.get_width() - 4, cy + 2))
+                surf.blit(rt, (cx + card_w//2 - rt.get_width()//2, cy + 80))
+                # Animated/FX badge for exotic
+                if hat.get("anim") and hat["rarity"] == "exotic":
+                    ab = desc_font.render("★ FX", True, (255, 100, 140))
+                    surf.blit(ab, (cx + card_w - ab.get_width() - 4, cy + 3))
+                elif hat.get("anim"):
+                    ab = desc_font.render("★", True, (255, 255, 100))
+                    surf.blit(ab, (cx + card_w - ab.get_width() - 4, cy + 3))
             else:
-                # Locked
-                pygame.draw.line(surf, (40,40,55), (cx+card_w//2-8, cy+36), (cx+card_w//2+8, cy+36), 2)
-                pygame.draw.line(surf, (40,40,55), (cx+card_w//2, cy+28), (cx+card_w//2, cy+44), 2)
-                lt = desc_font.render("???", True, (50, 50, 65))
-                surf.blit(lt, (cx + card_w//2 - lt.get_width()//2, cy + 60))
-                rt = desc_font.render(hat["rarity"].upper(), True, (40, 40, 55))
-                surf.blit(rt, (cx + card_w//2 - rt.get_width()//2, cy + 78))
+                # Locked — dim, no plus signs
+                pygame.draw.circle(surf, (30, 32, 48), (cx + card_w//2, cy + 40), 10, 1)
+                lt = desc_font.render("???", True, (40, 42, 58))
+                surf.blit(lt, (cx + card_w//2 - lt.get_width()//2, cy + 62))
+                rt = desc_font.render(hat["rarity"].upper(), True, (35, 38, 52))
+                surf.blit(rt, (cx + card_w//2 - rt.get_width()//2, cy + 80))
 
-        # Unequip button
-        ub_rect = pygame.Rect(sw//2 - 80, sh - 80, 160, 36)
-        ub_hov = ub_rect.collidepoint(mx, my)
-        ub_bg = pygame.Surface((160, 36))
-        ub_bg.fill((100, 100, 120))
-        ub_bg.set_alpha(40 if ub_hov else 15)
-        surf.blit(ub_bg, ub_rect.topleft)
-        pygame.draw.rect(surf, (160,170,190) if ub_hov else (80,80,100), ub_rect, 2, border_radius=5)
-        ubt = menu_font.render("Remove Hat" if equipped else "No Hat", True,
-                               WHITE if ub_hov else (120,130,150))
-        surf.blit(ubt, (ub_rect.centerx - ubt.get_width()//2, ub_rect.centery - ubt.get_height()//2))
+        # Scroll indicator
+        if max_scroll > 0:
+            vis_h = sh - 100
+            bar_h = max(20, int(vis_h * vis_h / (total_grid_h + 1)))
+            bar_y = 54 + int(scroll / max(1, max_scroll) * (vis_h - bar_h))
+            pygame.draw.rect(surf, (25, 28, 42), (sw - 14, 54, 5, vis_h), border_radius=3)
+            pygame.draw.rect(surf, ACCENT, (sw - 14, bar_y, 5, bar_h), border_radius=3)
 
-        # Back button
-        bb_rect = pygame.Rect(sw//2 - 80, sh - 38, 160, 32)
-        bb_hov = bb_rect.collidepoint(mx, my)
-        bbt = menu_font.render("Back", True, WHITE if bb_hov else (100,110,130))
-        surf.blit(bbt, (bb_rect.centerx - bbt.get_width()//2, bb_rect.centery - bbt.get_height()//2))
+        # ── Bottom bar: equipped hat info ──
+        bottom_y = sh - 36
+        pygame.draw.line(surf, BORDER, (20, bottom_y - 6), (sw - 20, bottom_y - 6), 1)
+        if equipped:
+            eq_hat = next((h for h in hats if h["id"] == equipped), None)
+            if eq_hat:
+                eq_rc = RARITY_COLORS.get(eq_hat["rarity"], TEXT_MID)
+                eq_txt = small_font.render(f"Equipped: {eq_hat['name']}", True, eq_rc)
+                surf.blit(eq_txt, (20, bottom_y))
+                hint = desc_font.render("Click equipped hat to unequip", True, TEXT_DIM)
+                surf.blit(hint, (sw - hint.get_width() - 20, bottom_y + 4))
+        else:
+            nt = small_font.render("No hat equipped", True, TEXT_DIM)
+            surf.blit(nt, (20, bottom_y))
 
         display_mgr.present()
 
@@ -389,18 +393,18 @@ def show_hat_menu():
             if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
                 return
             if ev.type == pygame.MOUSEWHEEL:
-                scroll = max(0, scroll - ev.y * 30)
+                scroll = max(0, min(max_scroll, scroll - ev.y * 35))
             if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
-                if bb_rect.collidepoint(ev.pos):
+                if back_r.collidepoint(ev.pos):
                     return
-                if ub_rect.collidepoint(ev.pos):
-                    equipped = None
-                    settings_module.config["equipped_hat"] = None
-                    save_config(settings_module.config)
                 for cr, hat in rects:
-                    if cr.collidepoint(ev.pos) and hat["id"] in collected:
-                        equipped = hat["id"]
-                        settings_module.config["equipped_hat"] = hat["id"]
+                    if cr.collidepoint(ev.pos) and hat["id"] in collected and cr.y >= 55:
+                        if equipped == hat["id"]:
+                            equipped = None
+                            settings_module.config["equipped_hat"] = None
+                        else:
+                            equipped = hat["id"]
+                            settings_module.config["equipped_hat"] = hat["id"]
                         save_config(settings_module.config)
                         break
 

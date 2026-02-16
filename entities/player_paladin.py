@@ -62,3 +62,6 @@ class PlayerPaladin(PlayerBase):
 
     def get_weapon_type(self):
         return "bullet"
+
+    def get_bullet_color(self):
+        return (255, 215, 0)  # Gold

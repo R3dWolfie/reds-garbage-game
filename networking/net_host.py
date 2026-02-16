@@ -7,6 +7,7 @@ The host is authoritative over enemy spawning and wave progression.
 import socket
 import threading
 import time
+import json
 from networking.net_common import *
 
 
@@ -21,6 +22,8 @@ class GameHost:
         self.lock = threading.Lock()
         self.message_queue = []  # Messages for the host game to process
         self.host_player_id = 0
+        self.lobby_name = "Game"
+        self.password = ""  # Empty = no password
 
     def start(self):
         """Start listening for connections."""
@@ -34,9 +37,40 @@ class GameHost:
         self.accept_thread = threading.Thread(target=self._accept_loop, daemon=True)
         self.accept_thread.start()
 
+        # Start UDP broadcast beacon for server discovery
+        self._beacon_thread = threading.Thread(target=self._beacon_loop, daemon=True)
+        self._beacon_thread.start()
+
         local_ip = get_local_ip()
         print(f"[Host] Server started on {local_ip}:{self.port}")
         return local_ip
+
+    def _beacon_loop(self):
+        """Broadcast server info via UDP for LAN discovery."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.settimeout(1.0)
+        except Exception as e:
+            print(f"[Host] Beacon setup failed: {e}")
+            return
+        while self.running:
+            try:
+                with self.lock:
+                    pc = 1 + len(self.clients)
+                info = json.dumps({
+                    "name": self.lobby_name,
+                    "port": self.port,
+                    "players": pc,
+                    "max": self.max_players,
+                    "has_password": bool(self.password),
+                    "ip": get_local_ip(),
+                }).encode("utf-8")
+                sock.sendto(info, ("<broadcast>", BROADCAST_PORT))
+            except Exception:
+                pass
+            time.sleep(1.5)
+        sock.close()
 
     def stop(self):
         """Shut down the server."""

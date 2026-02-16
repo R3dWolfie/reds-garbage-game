@@ -826,73 +826,103 @@ def run_game(class_key, starting_wave=1):
 
                         bsize = player_obj.stats.get("bullet_size", 1.0)
                         if weapon == "beam":
-                            # Arcanist beam — instant line from player to screen edge
-                            beam_len = max(sw, sh) * 1.5
-                            end_x = player_obj.rect.centerx + math.cos(bullet_angle) * beam_len
-                            end_y = player_obj.rect.centery + math.sin(bullet_angle) * beam_len
-                            beam_w = int(12 * bsize)
+                            # Arcanist beam — bounces off screen edges!
+                            beam_w = int(12 * bsize * (1 + (multishot_count - 1) * 0.4))
+                            bounces = player_obj.stats.get("bullet_bounces", 0)
+
+                            # Calculate beam segments with bouncing
+                            segments = []
+                            bx, by = float(player_obj.rect.centerx), float(player_obj.rect.centery)
+                            bdx = math.cos(bullet_angle)
+                            bdy = math.sin(bullet_angle)
+                            for _seg in range(bounces + 1):
+                                # March forward to find wall hit
+                                steps = int(max(sw, sh) * 2)
+                                ex, ey = bx + bdx * steps, by + bdy * steps
+                                # Clip to screen edges
+                                t_min = steps
+                                if bdx > 0: t_min = min(t_min, (sw - bx) / bdx) if bdx != 0 else t_min
+                                elif bdx < 0: t_min = min(t_min, -bx / bdx) if bdx != 0 else t_min
+                                if bdy > 0: t_min = min(t_min, (sh - by) / bdy) if bdy != 0 else t_min
+                                elif bdy < 0: t_min = min(t_min, -by / bdy) if bdy != 0 else t_min
+                                t_min = max(1, t_min)
+                                hit_x = bx + bdx * t_min
+                                hit_y = by + bdy * t_min
+                                segments.append(((int(bx), int(by)), (int(hit_x), int(hit_y))))
+                                # Bounce: reflect off the wall we hit
+                                if abs(hit_x) < 2 or abs(hit_x - sw) < 2:
+                                    bdx = -bdx
+                                if abs(hit_y) < 2 or abs(hit_y - sh) < 2:
+                                    bdy = -bdy
+                                bx, by = hit_x, hit_y
+
                             active_beam = {
-                                "start": player_obj.rect.center,
-                                "end": (int(end_x), int(end_y)),
-                                "timer": 15,  # frames the beam stays visible
+                                "segments": segments,
+                                "timer": 15,
                                 "width": beam_w,
                                 "dmg": player_obj.stats["damage"],
                                 "angle": bullet_angle,
                             }
-                            beam_hit_this_frame = set()
-                            # Damage all enemies along the beam line NOW
+                            # Damage all enemies along ALL beam segments
                             for enemy in list(enemies_grp):
                                 if isinstance(enemy, PhaseWraith) and enemy.phased_out:
                                     continue
                                 ex, ey = enemy.rect.centerx, enemy.rect.centery
-                                px_r = ex - player_obj.rect.centerx
-                                py_r = ey - player_obj.rect.centery
-                                bx_n = math.cos(bullet_angle)
-                                by_n = math.sin(bullet_angle)
-                                proj = px_r * bx_n + py_r * by_n
-                                if proj > 0:
-                                    perp = abs(px_r * by_n - py_r * bx_n)
-                                    if perp < beam_w + enemy.rect.width // 2:
-                                        dmg = player_obj.stats["damage"]
-                                        is_crit = False
-                                        if hasattr(player_obj, 'crit_chance') and player_obj.crit_chance > 0:
-                                            if random.random() < player_obj.crit_chance:
-                                                dmg = int(dmg * 2); is_crit = True
-                                        dead = enemy.take_damage(dmg)
-                                        vfx.hit_spark(enemy.rect.centerx, enemy.rect.centery, (255, 120, 120))
-                                        vfx.damage_number(enemy.rect.centerx, enemy.rect.top, dmg, is_crit)
-                                        if dead:
-                                            sounds.play_hit()
-                                            trigger_shake(6, 5)
-                                            ec = getattr(enemy, 'color', (255, 80, 80))
-                                            if getattr(enemy, 'is_boss', False):
-                                                vfx.boss_death_burst(enemy.rect.centerx, enemy.rect.centery, ec)
-                                                trigger_shake(15, 12)
-                                            else:
-                                                vfx.enemy_death_burst(enemy.rect.centerx, enemy.rect.centery, ec)
-                                            if isinstance(enemy, SplitterEnemy) and enemy.size == 'large':
-                                                for _ in range(2):
-                                                    mini = SplitterEnemy(player_obj, current_wave, 'medium')
-                                                    mini.rect.center = enemy.rect.center
-                                                    mini.get_nearest_player_pos = make_nearest_player_finder(mini)
-                                                    all_sprites.add(mini); enemies_grp.add(mini)
-                                            elif isinstance(enemy, SplitterEnemy) and enemy.size == 'medium':
-                                                for _ in range(2):
-                                                    tiny = SplitterEnemy(player_obj, current_wave, 'small')
-                                                    tiny.rect.center = enemy.rect.center
-                                                    tiny.get_nearest_player_pos = make_nearest_player_finder(tiny)
-                                                    all_sprites.add(tiny); enemies_grp.add(tiny)
-                                            if isinstance(enemy, HydraBoss) and getattr(enemy, 'is_hydra_parent', False):
-                                                for _ in range(2):
-                                                    hm = HydraMini(player_obj, current_wave, enemy.rect.center)
-                                                    hm._net_id = id(hm)
-                                                    hm.get_nearest_player_pos = make_nearest_player_finder(hm)
-                                                    all_sprites.add(hm); enemies_grp.add(hm)
-                                            if gs.net_mode == "client" and gs.net_client:
-                                                gs.net_client.send(MSG_ENEMY_DEAD, {"enemy_id": getattr(enemy, '_net_id', -1)})
-                                            elif gs.net_mode == "host" and gs.net_host:
-                                                gs.net_host.broadcast(MSG_ENEMY_DEAD, {"enemy_id": getattr(enemy, '_net_id', -1)})
-                                            handle_enemy_death(enemy, all_sprites, gems_grp, health_orbs_grp, gs.net_mode, gs.net_host, gold_grp)
+                                hit = False
+                                for seg_start, seg_end in segments:
+                                    # Point-to-segment distance
+                                    sx, sy = seg_start
+                                    dx_s, dy_s = seg_end[0] - sx, seg_end[1] - sy
+                                    seg_len_sq = dx_s*dx_s + dy_s*dy_s
+                                    if seg_len_sq < 1: continue
+                                    t_proj = max(0, min(1, ((ex-sx)*dx_s + (ey-sy)*dy_s) / seg_len_sq))
+                                    closest_x = sx + t_proj * dx_s
+                                    closest_y = sy + t_proj * dy_s
+                                    dist = math.hypot(ex - closest_x, ey - closest_y)
+                                    if dist < beam_w + enemy.rect.width // 2:
+                                        hit = True
+                                        break
+                                if hit:
+                                    dmg = player_obj.stats["damage"]
+                                    is_crit = False
+                                    if hasattr(player_obj, 'crit_chance') and player_obj.crit_chance > 0:
+                                        if random.random() < player_obj.crit_chance:
+                                            dmg = int(dmg * 2); is_crit = True
+                                    dead = enemy.take_damage(dmg)
+                                    vfx.hit_spark(enemy.rect.centerx, enemy.rect.centery, (255, 120, 120))
+                                    vfx.damage_number(enemy.rect.centerx, enemy.rect.top, dmg, is_crit)
+                                    if dead:
+                                        sounds.play_hit()
+                                        trigger_shake(6, 5)
+                                        ec = getattr(enemy, 'color', (255, 80, 80))
+                                        if getattr(enemy, 'is_boss', False):
+                                            vfx.boss_death_burst(enemy.rect.centerx, enemy.rect.centery, ec)
+                                            trigger_shake(15, 12)
+                                        else:
+                                            vfx.enemy_death_burst(enemy.rect.centerx, enemy.rect.centery, ec)
+                                        if isinstance(enemy, SplitterEnemy) and enemy.size == 'large':
+                                            for _ in range(2):
+                                                mini = SplitterEnemy(player_obj, current_wave, 'medium')
+                                                mini.rect.center = enemy.rect.center
+                                                mini.get_nearest_player_pos = make_nearest_player_finder(mini)
+                                                all_sprites.add(mini); enemies_grp.add(mini)
+                                        elif isinstance(enemy, SplitterEnemy) and enemy.size == 'medium':
+                                            for _ in range(2):
+                                                tiny = SplitterEnemy(player_obj, current_wave, 'small')
+                                                tiny.rect.center = enemy.rect.center
+                                                tiny.get_nearest_player_pos = make_nearest_player_finder(tiny)
+                                                all_sprites.add(tiny); enemies_grp.add(tiny)
+                                        if isinstance(enemy, HydraBoss) and getattr(enemy, 'is_hydra_parent', False):
+                                            for _ in range(2):
+                                                hm = HydraMini(player_obj, current_wave, enemy.rect.center)
+                                                hm._net_id = id(hm)
+                                                hm.get_nearest_player_pos = make_nearest_player_finder(hm)
+                                                all_sprites.add(hm); enemies_grp.add(hm)
+                                        if gs.net_mode == "client" and gs.net_client:
+                                            gs.net_client.send(MSG_ENEMY_DEAD, {"enemy_id": getattr(enemy, '_net_id', -1)})
+                                        elif gs.net_mode == "host" and gs.net_host:
+                                            gs.net_host.broadcast(MSG_ENEMY_DEAD, {"enemy_id": getattr(enemy, '_net_id', -1)})
+                                        handle_enemy_death(enemy, all_sprites, gems_grp, health_orbs_grp, gs.net_mode, gs.net_host, gold_grp)
                             # Only fire 1 beam regardless of multishot (multishot = width bonus)
                             break
                         elif weapon == "laser":
@@ -902,7 +932,8 @@ def run_game(class_key, starting_wave=1):
                         else:
                             b = Bullet(player_obj.rect.center, (target_x, target_y),
                                        player_obj.stats["bullet_speed"], player_obj.stats["piercing"],
-                                       size=bsize, bounces=_bullet_bounces)
+                                       size=bsize, bounces=_bullet_bounces,
+                                       color=player_obj.get_bullet_color())
                         if weapon != "beam":
                             all_sprites.add(b)
                             bullets_grp.add(b)
@@ -919,6 +950,7 @@ def run_game(class_key, starting_wave=1):
                                 "piercing": player_obj.stats["piercing"],
                                 "damage": player_obj.stats["damage"],
                                 "size": bsize,
+                                "color": list(player_obj.get_bullet_color()),
                             }
                             if gs.net_mode == "host" and gs.net_host:
                                 gs.net_host.broadcast(MSG_BULLET_FIRE, bullet_data)
@@ -1484,23 +1516,25 @@ def run_game(class_key, starting_wave=1):
                         if dist_h < player_obj.HEAL_RADIUS:
                             pass  # Would need net msg to actually heal — visual only for now
 
-        # Draw active beam (Arcanist)
+        # Draw active beam (Arcanist) — supports bouncing segments
         if active_beam and active_beam["timer"] > 0:
             bs = pygame.Surface((sw, sh), pygame.SRCALPHA)
             t_ratio = active_beam["timer"] / 15.0
             bw = int(active_beam["width"] * t_ratio)
             ba = int(200 * t_ratio)
-            # Outer glow
-            pygame.draw.line(bs, (255, 80, 80, int(ba * 0.3)),
-                             active_beam["start"], active_beam["end"], bw + 12)
-            pygame.draw.line(bs, (255, 120, 120, int(ba * 0.6)),
-                             active_beam["start"], active_beam["end"], bw + 4)
-            # Core
-            pygame.draw.line(bs, (255, 200, 200, ba),
-                             active_beam["start"], active_beam["end"], max(2, bw))
-            # Bright center
-            pygame.draw.line(bs, (255, 255, 255, int(ba * 0.8)),
-                             active_beam["start"], active_beam["end"], max(1, bw // 2))
+            segments = active_beam.get("segments", [])
+            if not segments:
+                # Fallback for old format
+                segments = [(active_beam.get("start", (0,0)), active_beam.get("end", (0,0)))]
+            for seg_start, seg_end in segments:
+                pygame.draw.line(bs, (255, 80, 80, int(ba * 0.3)),
+                                 seg_start, seg_end, bw + 12)
+                pygame.draw.line(bs, (255, 120, 120, int(ba * 0.6)),
+                                 seg_start, seg_end, bw + 4)
+                pygame.draw.line(bs, (255, 200, 200, ba),
+                                 seg_start, seg_end, max(2, bw))
+                pygame.draw.line(bs, (255, 255, 255, int(ba * 0.8)),
+                                 seg_start, seg_end, max(1, bw // 2))
             shake_surf.blit(bs, (0, 0))
             active_beam["timer"] -= 1
         draw_enemy_health_bars(shake_surf, enemies_grp)
@@ -1657,7 +1691,7 @@ def run_game(class_key, starting_wave=1):
                     if btype == "laser":
                         rb = LaserBeam(bpos, tpos, bspd, bprc, size=bsz)
                     else:
-                        rb = Bullet(bpos, tpos, bspd, bprc, size=bsz)
+                        rb = Bullet(bpos, tpos, bspd, bprc, size=bsz, color=tuple(data.get("color", [255,255,0])))
                     rb._net_damage = bdmg
                     all_sprites.add(rb)
                     bullets_grp.add(rb)
@@ -1802,7 +1836,7 @@ def run_game(class_key, starting_wave=1):
                     if btype == "laser":
                         rb = LaserBeam(bpos, tpos, bspd, bprc, size=bsz)
                     else:
-                        rb = Bullet(bpos, tpos, bspd, bprc, size=bsz)
+                        rb = Bullet(bpos, tpos, bspd, bprc, size=bsz, color=tuple(data.get("color", [255,255,0])))
                     rb._net_damage = bdmg
                     all_sprites.add(rb)
                     bullets_grp.add(rb)

@@ -9,6 +9,7 @@ import struct
 import socket
 
 DEFAULT_PORT = 27015
+BROADCAST_PORT = 27016  # UDP broadcast for server discovery
 BUFFER_SIZE = 4096
 
 # Message types

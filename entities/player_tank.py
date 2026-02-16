@@ -34,7 +34,10 @@ class PlayerTank(PlayerBase):
         self.ram_cooldown_max = 15  # Frames between ram hits
 
     def get_weapon_type(self):
-        return "bullet"  # Also fires bullets, but slower
+        return "bullet"
+
+    def get_bullet_color(self):
+        return (70, 130, 255)  # Steel blue
 
     def ram_enemy(self, enemy):
         """Deal collision damage to an enemy. Returns True if enemy died."""

@@ -7,17 +7,18 @@ from core.sprite_loader import load_sprite
 
 
 class Bullet(pygame.sprite.Sprite):
-    def __init__(self, start_pos, target_pos, speed, piercing=1, size=1.0, bounces=0):
+    def __init__(self, start_pos, target_pos, speed, piercing=1, size=1.0, bounces=0, color=None):
         super().__init__()
         bullet_size = int(10 * size)
-        # Neon bullet with glow
         total = bullet_size + 6
         self.image = pygame.Surface((total, total), pygame.SRCALPHA)
-        # Outer glow
-        pygame.draw.circle(self.image, (255, 255, 0, 40), (total // 2, total // 2), total // 2)
-        # Inner bright
-        pygame.draw.circle(self.image, (255, 255, 100), (total // 2, total // 2), bullet_size // 2)
-        pygame.draw.circle(self.image, (255, 255, 200), (total // 2, total // 2), max(1, bullet_size // 4))
+        # Use class-specific color or default yellow
+        c = color or (255, 255, 0)
+        bright = (min(255, c[0]+80), min(255, c[1]+80), min(255, c[2]+80))
+        core = (min(255, c[0]+160), min(255, c[1]+160), min(255, c[2]+160))
+        pygame.draw.circle(self.image, (*c, 40), (total // 2, total // 2), total // 2)
+        pygame.draw.circle(self.image, bright, (total // 2, total // 2), bullet_size // 2)
+        pygame.draw.circle(self.image, core, (total // 2, total // 2), max(1, bullet_size // 4))
         self.rect = self.image.get_rect()
         self.rect.center = start_pos
 

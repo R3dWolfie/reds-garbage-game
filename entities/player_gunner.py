@@ -31,3 +31,6 @@ class PlayerGunner(PlayerBase):
 
     def get_weapon_type(self):
         return "bullet"
+
+    def get_bullet_color(self):
+        return (255, 165, 0)  # Orange

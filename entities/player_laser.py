@@ -20,13 +20,14 @@ class PlayerLaser(PlayerBase):
         "fire_rate": 80,        # Slow fire rate
         "bullet_speed": 4,      # Not used for beam but kept for compat
         "max_health": 80,       # Fragile
-        "multishot": 1,         # Number of beams
+        "multishot": 1,         # Beam width multiplier via multishot
         "damage": 3,            # Damage per tick (beam hits multiple times)
-        "piercing": 999,        # Infinite pierce
+        "piercing": 1,          # Beam always pierces, stat used for bounces
         "magnet": 0,
         "bullet_size": 1,       # Beam width multiplier
         "xp_gain": 1.0,
         "accuracy": 1.0,
+        "bullet_bounces": 2,    # Beam bounces off screen edges!
     }
 
     def get_weapon_type(self):

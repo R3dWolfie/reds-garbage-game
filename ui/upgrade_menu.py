@@ -104,6 +104,20 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
 
     pool = BIG_UPGRADE_POOL if is_big else UPGRADE_POOL
 
+    # Add class-specific upgrades to the pool
+    class_key = getattr(player_obj, 'CLASS_KEY', 'default')
+    if is_big:
+        class_pool = BIG_CLASS_UPGRADES.get(class_key, [])
+    else:
+        class_pool = CLASS_UPGRADES.get(class_key, [])
+    pool = list(pool) + list(class_pool)
+
+    # Remove useless upgrades for specific classes
+    weapon = player_obj.get_weapon_type()
+    if weapon == "beam":
+        # Piercing is meaningless for beam (always pierces everything)
+        pool = [u for u in pool if "piercing" not in u["key"]]
+
     weights = []
     for item in pool:
         base_key = item["key"].replace("big_","")
@@ -127,6 +141,11 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
     hues = [(0,255,255),(57,255,20),(0,180,255),(255,50,200),(255,200,50)]
     global _auto_upgrade_on
     auto_timer = 0  # counts up each frame when auto is on (120 = 2 sec at 60fps)
+    # Flash animation state
+    flash_active = False
+    flash_timer = 0
+    flash_target = -1  # index that will be chosen
+    flash_highlight = 0  # currently highlighted card during flash
 
     while True:
         sw, sh = settings_module.SCREEN_WIDTH, settings_module.SCREEN_HEIGHT
@@ -149,19 +168,16 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
         tt = header_font.render(ts, True, tc)
         pulse = math.sin(t*3)*0.3+0.7
         # Title (no glow surface)
-        surf.blit(tt, (sw//2-tt.get_width()//2, 20))
-
-        lv = small_font.render(f"Level {player_obj.level}", True, (70,80,100))
-        surf.blit(lv, (sw//2-lv.get_width()//2, 54))
+        surf.blit(tt, (sw//2-tt.get_width()//2, sh//2 - 180))
 
         # Cards — tall vertical, side by side
         num = len(options)
-        card_w = min(int(sw * 0.14), (sw - 40) // num - 10)
-        card_h = min(int(sh * 0.7), sh - 140)
+        card_w = min(220, (sw - 60) // num - 12)
+        card_h = 260
         gap = 10
         total_w = num * card_w + (num-1) * gap
         sx = sw//2 - total_w//2
-        sy = 72
+        sy = sh//2 - card_h//2 + 10
 
         rects = []
         for i, opt in enumerate(options):
@@ -169,27 +185,40 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
             cy = sy
             cr = pygame.Rect(cx, cy, card_w, card_h)
             rects.append(cr)
-            hov = cr.collidepoint(mx, my)
+            hov = cr.collidepoint(mx, my) and not flash_active
+            # Flash highlight during auto-pick animation
+            is_flash = flash_active and (flash_highlight % len(options) == i)
             bc = GOLD if is_big else hues[i % len(hues)]
 
             # BG
             bg = pygame.Surface((card_w, card_h))
-            bg.fill(bc)
-            bg.set_alpha(38 if hov else 10)
+            if is_flash:
+                bg.fill((255, 255, 255))
+                bg.set_alpha(50)
+            else:
+                bg.fill(bc)
+                bg.set_alpha(38 if hov else 10)
             surf.blit(bg, (cx, cy))
 
             # Top accent
             pygame.draw.rect(surf, bc, (cx, cy, card_w, 3))
 
-            # Glow border
-            # Simple border, no glow loop
-            pygame.draw.rect(surf, WHITE if hov else bc, cr, 2 if not hov else 3, border_radius=6)
+            # Border
+            if is_flash:
+                pygame.draw.rect(surf, (255, 255, 255), cr, 3, border_radius=6)
+            else:
+                pygame.draw.rect(surf, WHITE if hov else bc, cr, 2 if not hov else 3, border_radius=6)
 
-            # Icon
-            _draw_upgrade_icon(surf, cx+card_w//2, cy+card_h//8, opt["key"], bc, r=min(18, card_w//10))
+            # Keybind number badge (top-left corner)
+            key_num = str(i + 1)
+            kt = desc_font.render(key_num, True, bc if not is_flash else WHITE)
+            kbd_r = pygame.Rect(cx + 4, cy + 5, 16, 16)
+            pygame.draw.rect(surf, (20, 24, 40), kbd_r, 0, border_radius=3)
+            pygame.draw.rect(surf, bc if not is_flash else WHITE, kbd_r, 1, border_radius=3)
+            surf.blit(kt, (kbd_r.centerx - kt.get_width()//2, kbd_r.centery - kt.get_height()//2))
 
             # Name (word-wrapped)
-            ny = cy + card_h//5
+            ny = cy + 20
             words = opt["name"].split(); lines = []; cur = ""
             for w in words:
                 test = cur+" "+w if cur else w
@@ -249,7 +278,7 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
         # Auto-upgrade toggle + timer
         auto_w, auto_h = 200, 34
         auto_rect = pygame.Rect(sw//2 - auto_w//2, sh - 56, auto_w, auto_h)
-        auto_hov = auto_rect.collidepoint(mx, my)
+        auto_hov = auto_rect.collidepoint(mx, my) and not flash_active
         ac = (57, 255, 20) if _auto_upgrade_on else (255, 200, 50)
         ab = pygame.Surface((auto_w, auto_h))
         ab.fill(ac)
@@ -261,8 +290,28 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
         at = small_font.render(auto_label, True, ac if _auto_upgrade_on else ((255,200,50) if auto_hov else (120,110,60)))
         surf.blit(at, (auto_rect.centerx - at.get_width()//2, auto_rect.centery - at.get_height()//2))
 
-        # Timer bar when auto is on
-        if _auto_upgrade_on:
+        # Flash animation logic
+        if flash_active:
+            flash_timer += 1
+            # Cycle speed slows down over time: fast at start, slow near end
+            if flash_timer < 20:
+                cycle_speed = 3  # fast
+            elif flash_timer < 40:
+                cycle_speed = 5
+            elif flash_timer < 55:
+                cycle_speed = 8
+            else:
+                cycle_speed = 12  # slow
+            if flash_timer % cycle_speed == 0:
+                flash_highlight += 1
+            # After ~70 frames (~1.2s), land on chosen target and pick
+            if flash_timer >= 70:
+                flash_highlight = flash_target
+            if flash_timer >= 80:
+                _pick(flash_target); return
+
+        # Timer bar when auto is on (but not flashing yet)
+        elif _auto_upgrade_on:
             auto_timer += 1
             bar_w = auto_w - 8
             bar_ratio = min(1.0, auto_timer / 120.0)  # 120 frames = 2 sec at 60fps
@@ -275,9 +324,12 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
             ct = desc_font.render(f"{secs_left:.1f}s", True, ac)
             surf.blit(ct, (auto_rect.right + 4, bar_y - 2))
 
-            # Auto-pick after 2 seconds
+            # Start flash animation after 2 seconds
             if auto_timer >= 120:
-                _pick(random.randint(0, len(options)-1)); return
+                flash_active = True
+                flash_timer = 0
+                flash_target = random.randint(0, len(options) - 1)
+                flash_highlight = 0
         else:
             auto_timer = 0
 
@@ -299,6 +351,8 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
 
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT: pygame.quit(); sys.exit()
+            if flash_active:
+                continue  # Block all input during flash animation
             if ev.type == pygame.KEYDOWN:
                 # 1-5 keys
                 num_keys = {pygame.K_1: 0, pygame.K_2: 1, pygame.K_3: 2, pygame.K_4: 3, pygame.K_5: 4}
