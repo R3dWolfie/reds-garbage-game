@@ -23,6 +23,7 @@ class PlayerLaser(PlayerBase):
         "damage": 5,            # High damage
         "piercing": 999,        # Infinite pierce
         "magnet": 0,
+        "bullet_size": 1,
     }
 
     def get_weapon_type(self):

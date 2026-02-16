@@ -22,6 +22,7 @@ class PlayerTank(PlayerBase):
         "damage": 1,
         "piercing": 1,
         "magnet": 0,
+        "bullet_size": 1,
     }
 
     def __init__(self):

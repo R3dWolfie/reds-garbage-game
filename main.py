@@ -15,14 +15,25 @@ from networking.net_host import GameHost
 from networking.net_client import GameClient
 from updater.version import GAME_NAME, VERSION
 from sprite_loader import load_sprite
+from sound_manager import SoundManager
+
+# ---- Additional message types not in net_common ----
+MSG_PARTY_LEVEL_UP = "party_level_up"
+MSG_UPGRADE_PAUSE = "upgrade_pause"
+MSG_UPGRADE_RESUME = "upgrade_resume"
+MSG_WAVE_COMPLETE = "wave_complete"
+MSG_ENEMY_DEAD = "enemy_dead"
+MSG_ORB_SPAWN = "orb_spawn"
+MSG_USERNAME = "username"
 
 # ---- Global network state ----
 net_host = None
 net_client = None
 net_mode = None  # "host", "client", or None (singleplayer)
-remote_players = {}  # {player_id: {"x": ..., "y": ..., "class": ..., "level": ...}}
+remote_players = {}  # {player_id: {" x": ..., "y": ..., "class": ..., "level": ...}}
+remote_enemies = {}  # {enemy_id: RemoteEnemyGhost}
+upgrade_paused_by = None  # None or {"player_name": str, "level": int} when someone is upgrading
 local_username = settings_module.config.get("username", "Player")
-
 
 # ---- Initialize ----
 pygame.init()
@@ -82,8 +93,6 @@ class DisplayManager:
         return (settings_module.SCREEN_WIDTH, settings_module.SCREEN_HEIGHT)
 
 
-
-
 display_mgr = DisplayManager()
 screen = display_mgr.get_screen()
 
@@ -92,6 +101,21 @@ try:
     pygame.scrap.init()
 except Exception:
     pass
+
+# Sound manager — generates all SFX procedurally
+sounds = SoundManager(settings_module.config)
+
+# Screen shake state (global so any function can trigger it)
+_shake_frames = 0
+_shake_intensity = 0
+
+
+def trigger_shake(frames=6, intensity=5):
+    global _shake_frames, _shake_intensity
+    _shake_frames = max(_shake_frames, frames)
+    _shake_intensity = max(_shake_intensity, intensity)
+
+
 clock = pygame.time.Clock()
 
 # Fonts
@@ -158,9 +182,11 @@ class SettingsMenu:
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
-                    pygame.quit(); sys.exit()
+                    pygame.quit();
+                    sys.exit()
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                    self.close(); return
+                    self.close();
+                    return
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     for sr, sk in self.slider_rects:
                         if sr.inflate(0, 20).collidepoint(mx, my):
@@ -174,9 +200,11 @@ class SettingsMenu:
                     if self.fs_btn.collidepoint(mx, my):
                         self.dm.toggle_fullscreen()
                     if self.back_btn.collidepoint(mx, my):
-                        self.close(); return
+                        self.close();
+                        return
                     if self.exit_btn.collidepoint(mx, my):
-                        pygame.quit(); sys.exit()
+                        pygame.quit();
+                        sys.exit()
                 if event.type == pygame.MOUSEBUTTONUP:
                     self.dragging = None
 
@@ -184,9 +212,12 @@ class SettingsMenu:
                 for sr, sk in self.slider_rects:
                     if sk == self.dragging:
                         val = max(0.0, min(1.0, (mx - sr.x) / sr.width))
-                        if sk == "master": self.dm.set_master_volume(val)
-                        elif sk == "sfx": self.dm.set_sfx_volume(val)
-                        elif sk == "music": self.dm.set_music_volume(val)
+                        if sk == "master":
+                            self.dm.set_master_volume(val)
+                        elif sk == "sfx":
+                            self.dm.set_sfx_volume(val)
+                        elif sk == "music":
+                            self.dm.set_music_volume(val)
 
             surf = self.dm.get_screen()
             if background_surf:
@@ -212,15 +243,19 @@ class SettingsMenu:
             res_text = menu_font.render(res_str, True, GOLD)
             self.left_arrow = self._draw_button(surf, pygame.Rect(cx + 150, cy - 2, 35, 30), "<", border_color=GOLD)
             surf.blit(res_text, (cx + 200, cy))
-            self.right_arrow = self._draw_button(surf, pygame.Rect(cx + 200 + res_text.get_width() + 15, cy - 2, 35, 30), ">", border_color=GOLD)
+            self.right_arrow = self._draw_button(surf,
+                                                 pygame.Rect(cx + 200 + res_text.get_width() + 15, cy - 2, 35, 30), ">",
+                                                 border_color=GOLD)
 
             cy += 40
-            self.apply_btn = self._draw_button(surf, pygame.Rect(cx, cy, 180, 35), "Apply Resolution", border_color=GREEN, text_color=GREEN)
+            self.apply_btn = self._draw_button(surf, pygame.Rect(cx, cy, 180, 35), "Apply Resolution",
+                                               border_color=GREEN, text_color=GREEN)
 
             cy += 50
             fs = "ON" if self.dm.config["fullscreen"] else "OFF"
             fc = GREEN if self.dm.config["fullscreen"] else RED
-            self.fs_btn = self._draw_button(surf, pygame.Rect(cx, cy, 250, 35), f"Fullscreen: {fs}", border_color=fc, text_color=fc)
+            self.fs_btn = self._draw_button(surf, pygame.Rect(cx, cy, 250, 35), f"Fullscreen: {fs}", border_color=fc,
+                                            text_color=fc)
 
             cy += 60
             self.slider_rects = []
@@ -235,7 +270,8 @@ class SettingsMenu:
 
             cy += 80
             self.back_btn = self._draw_button(surf, pygame.Rect(cx, cy, 200, 40), "Back", border_color=WHITE)
-            self.exit_btn = self._draw_button(surf, pygame.Rect(cx + 230, cy, 200, 40), "Exit Game", border_color=RED, text_color=RED)
+            self.exit_btn = self._draw_button(surf, pygame.Rect(cx + 230, cy, 200, 40), "Exit Game", border_color=RED,
+                                              text_color=RED)
 
             pygame.display.flip()
             clock.tick(30)
@@ -250,7 +286,12 @@ settings_menu = SettingsMenu(display_mgr)
 
 def show_class_selection():
     """Let the player pick a class. Returns the class key string."""
+    global net_mode, net_host, net_client
     class_keys = list(CLASS_INFO.keys())
+
+    # Track if we're in multiplayer and waiting for others
+    waiting_for_players = False
+    players_ready = set()  # Set of player IDs who have chosen
 
     while True:
         sw = settings_module.SCREEN_WIDTH
@@ -261,7 +302,10 @@ def show_class_selection():
         surf.fill(BLACK)
 
         # Title
-        title = header_font.render("CHOOSE YOUR CLASS", True, GOLD)
+        if waiting_for_players:
+            title = header_font.render("WAITING FOR PLAYERS...", True, CYAN)
+        else:
+            title = header_font.render("CHOOSE YOUR CLASS", True, GOLD)
         surf.blit(title, (sw // 2 - title.get_width() // 2, 40))
 
         # Class cards
@@ -331,19 +375,59 @@ def show_class_selection():
                 st = small_font.render(s, True, GRAY)
                 surf.blit(st, (cx + 15, stat_y + j * 18))
 
-        # Hint
-        hint = small_font.render("Click a class to begin", True, GRAY)
+        # Hint or waiting message
+        if waiting_for_players:
+            if net_mode == "host":
+                ready_count = len(players_ready) + 1  # +1 for host
+                total = len(players_ready) + 1 + (
+                    len(net_host.clients) if net_host and hasattr(net_host, 'clients') else 0)
+                hint = small_font.render(f"Waiting for players ({ready_count}/{total} ready)...", True, CYAN)
+            else:
+                hint = small_font.render("Waiting for all players to choose...", True, CYAN)
+        else:
+            hint = small_font.render("Click a class to begin", True, GRAY)
         surf.blit(hint, (sw // 2 - hint.get_width() // 2, sh - 40))
 
         pygame.display.flip()
 
+        # Check for class ready messages in multiplayer
+        if net_mode == "host" and net_host and waiting_for_players:
+            for msg in net_host.get_messages():
+                if msg.get("type") == "class_ready":
+                    pid = msg.get("player_id", -1)
+                    players_ready.add(pid)
+            # If all clients are ready, we can start
+            client_count = len(net_host.clients) if hasattr(net_host, 'clients') else 0
+            if len(players_ready) >= client_count:
+                # Broadcast game start
+                net_host.broadcast("all_classes_ready", {})
+                return waiting_for_players  # Return the class we chose
+
+        elif net_mode == "client" and net_client and waiting_for_players:
+            for msg in net_client.get_messages():
+                if msg.get("type") == "all_classes_ready":
+                    # All players ready, start game
+                    return waiting_for_players  # Return the class we chose
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit(); sys.exit()
-            if event.type == pygame.MOUSEBUTTONDOWN:
+                pygame.quit();
+                sys.exit()
+            if event.type == pygame.MOUSEBUTTONDOWN and not waiting_for_players:
                 for rect, key in card_rects:
                     if rect.collidepoint(event.pos):
-                        return key
+                        # In multiplayer, broadcast our choice and wait
+                        if net_mode in ("host", "client"):
+                            waiting_for_players = key  # Store the chosen class
+                            if net_mode == "host":
+                                # Host: add self to ready, wait for clients
+                                players_ready = set()
+                            elif net_mode == "client":
+                                # Client: tell host we're ready
+                                net_client.send("class_ready", {"class": key})
+                        else:
+                            # Singleplayer: return immediately
+                            return key
 
         clock.tick(30)
 
@@ -466,10 +550,10 @@ def show_pause_menu():
         start_y = sh // 2 - 50
 
         buttons = [
-            ("Resume",    GREEN,  "resume"),
-            ("Settings",  GOLD,   "settings"),
+            ("Resume", GREEN, "resume"),
+            ("Settings", GOLD, "settings"),
             ("Main Menu", ORANGE, "main_menu"),
-            ("Exit Game", RED,    "exit"),
+            ("Exit Game", RED, "exit"),
         ]
 
         btn_rects = []
@@ -486,7 +570,8 @@ def show_pause_menu():
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit(); sys.exit()
+                pygame.quit();
+                sys.exit()
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 return "resume"
             if event.type == pygame.MOUSEBUTTONDOWN:
@@ -495,7 +580,8 @@ def show_pause_menu():
                         if action == "settings":
                             settings_menu.run(surf.copy())
                         elif action == "exit":
-                            pygame.quit(); sys.exit()
+                            pygame.quit();
+                            sys.exit()
                         else:
                             return action
 
@@ -531,9 +617,9 @@ def show_game_over(player_obj, wave):
             surf.blit(txt, (sw // 2 - txt.get_width() // 2, sh // 3 + 20 + i * 35))
 
         buttons = [
-            ("Retry",     GREEN,  "restart"),
+            ("Retry", GREEN, "restart"),
             ("Main Menu", ORANGE, "main_menu"),
-            ("Exit Game", RED,    "exit"),
+            ("Exit Game", RED, "exit"),
         ]
 
         btn_w, btn_h = 250, 45
@@ -554,12 +640,14 @@ def show_game_over(player_obj, wave):
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit(); sys.exit()
+                pygame.quit();
+                sys.exit()
             if event.type == pygame.MOUSEBUTTONDOWN:
                 for r, action in btn_rects:
                     if r.collidepoint(event.pos):
                         if action == "exit":
-                            pygame.quit(); sys.exit()
+                            pygame.quit();
+                            sys.exit()
                         return action
 
         clock.tick(30)
@@ -579,19 +667,32 @@ def get_nearest_enemies(player_obj, enemy_group, count):
     return [e for _, e in enemy_list[:count]]
 
 
-def handle_enemy_death(enemy_obj, all_spr, gem_grp, orb_grp):
+def handle_enemy_death(enemy_obj, all_spr, gem_grp, orb_grp, net_mode=None, net_host=None):
     xp_count = enemy_obj.get_xp_drop_count()
+    gem_positions = []
     for i in range(xp_count):
         offset = (enemy_obj.rect.centerx + random.randint(-20, 20),
                   enemy_obj.rect.centery + random.randint(-20, 20))
         gem = ExpGem(offset)
         all_spr.add(gem)
         gem_grp.add(gem)
+        gem_positions.append(offset)
+
+    # Broadcast gem spawns to clients
+    if net_mode == "host" and net_host and gem_positions:
+        net_host.broadcast(MSG_GEM_SPAWN, {"positions": gem_positions})
 
     if random.random() < HEALTH_ORB_DROP_CHANCE:
         orb = HealthOrb(enemy_obj.rect.center)
         all_spr.add(orb)
         orb_grp.add(orb)
+        # Broadcast orb spawn to clients
+        if net_mode == "host" and net_host:
+            net_host.broadcast(MSG_ORB_SPAWN, {
+                "x": enemy_obj.rect.centerx,
+                "y": enemy_obj.rect.centery,
+                "heal": orb.heal_amount
+            })
 
 
 def apply_magnet(player_obj, gem_grp):
@@ -618,15 +719,15 @@ def draw_upgrade_counters(surf, player_obj):
     surf.blit(header, (sx, sy - 22))
 
     stat_display = [
-        ("SPD",  "speed",        player_obj.stats["speed"]),
-        ("RATE", "fire_rate",    player_obj.stats["fire_rate"]),
+        ("SPD", "speed", player_obj.stats["speed"]),
+        ("RATE", "fire_rate", player_obj.stats["fire_rate"]),
         ("BSPD", "bullet_speed", player_obj.stats["bullet_speed"]),
-        ("HP",   "max_health",   player_obj.stats["max_health"]),
-        ("MULT", "multishot",    player_obj.stats["multishot"]),
-        ("DMG",  "damage",       player_obj.stats["damage"]),
-        ("PIER", "piercing",     player_obj.stats["piercing"]),
-        ("MAG",  "magnet",       player_obj.get_magnet_radius()),
-        ("SIZE", "bullet_size",  f"{player_obj.stats.get('bullet_size', 1.0):.1f}x"),
+        ("HP", "max_health", player_obj.stats["max_health"]),
+        ("MULT", "multishot", player_obj.stats["multishot"]),
+        ("DMG", "damage", player_obj.stats["damage"]),
+        ("PIER", "piercing", player_obj.stats["piercing"]),
+        ("MAG", "magnet", player_obj.get_magnet_radius()),
+        ("SIZE", "bullet_size", f"{player_obj.stats.get('bullet_size', 1.0):.1f}x"),
     ]
 
     for i, (label, key, value) in enumerate(stat_display):
@@ -636,15 +737,26 @@ def draw_upgrade_counters(surf, player_obj):
         surf.blit(text, (sx, sy + (i * 18)))
 
 
-def draw_ui(surf, player_obj, wave, enemy_group):
+def draw_ui(surf, player_obj, wave, enemy_group, net_mode=None, party_level=None, party_xp=None, party_xp_to_next=None):
     sw = settings_module.SCREEN_WIDTH
 
-    # XP Bar
-    xp_to_next = max(1, player_obj.xp_to_next_level)
-    xp_ratio = player_obj.current_xp / xp_to_next
+    # XP Bar - Use party XP in multiplayer, local XP in singleplayer
+    if net_mode in ("host", "client") and party_xp is not None:
+        # Show party XP in multiplayer
+        xp_to_next = max(1, party_xp_to_next)
+        xp_ratio = party_xp / xp_to_next
+        current_level = party_level
+        current_xp_val = party_xp
+    else:
+        # Show local XP in singleplayer
+        xp_to_next = max(1, player_obj.xp_to_next_level)
+        xp_ratio = player_obj.current_xp / xp_to_next
+        current_level = player_obj.level
+        current_xp_val = player_obj.current_xp
+
     pygame.draw.rect(surf, DARK_GRAY, (0, 0, sw, 20))
     pygame.draw.rect(surf, BLUE, (0, 0, xp_ratio * sw, 20))
-    xp_text = font.render(f"LVL {player_obj.level}  ({player_obj.current_xp}/{xp_to_next})", True, WHITE)
+    xp_text = font.render(f"LVL {current_level}  ({current_xp_val}/{xp_to_next})", True, WHITE)
     surf.blit(xp_text, (10, 22))
 
     # Health Bar
@@ -717,7 +829,7 @@ def draw_enemy_health_bars(surf, enemy_group):
 #                   UPGRADE MENU
 # ===========================================================
 
-def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp):
+def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net_host=None, net_client=None):
     pool = BIG_UPGRADE_POOL if is_big else UPGRADE_POOL
     options = random.sample(pool, min(5, len(pool)))
 
@@ -771,11 +883,17 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp):
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit(); sys.exit()
+                pygame.quit();
+                sys.exit()
             if event.type == pygame.MOUSEBUTTONDOWN:
                 for i, rect in enumerate(rects):
                     if rect.collidepoint(event.pos):
                         player_obj.apply_upgrade(options[i]["key"])
+                        # Notify host/clients that we finished picking
+                        if net_mode == "host" and net_host:
+                            pass  # Host handles its own completion in the gem block
+                        elif net_mode == "client" and net_client:
+                            net_client.send(MSG_UPGRADE_DONE, {})
                         menu_active = False
                         break
 
@@ -787,7 +905,7 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp):
 # ===========================================================
 
 def run_game(class_key):
-    global SCREEN_WIDTH, SCREEN_HEIGHT
+    global SCREEN_WIDTH, SCREEN_HEIGHT, upgrade_paused_by
 
     # Create player from selected class
     PlayerClass = PLAYER_CLASSES[class_key]
@@ -815,6 +933,12 @@ def run_game(class_key):
     wave_banner_timer = 0
     fire_cooldown = 0
 
+    # Party XP (shared in multiplayer, only tracked on host)
+    party_level = 1
+    party_xp = 0
+    party_xp_to_next = 5
+    upgrade_pending_players = set()  # Set of player IDs waiting to pick upgrades
+
     def start_wave(wave_num):
         nonlocal enemies_to_spawn, enemies_spawned, wave_active, spawn_timer, wave_banner_timer
         enemies_to_spawn = 5 + (wave_num * 2)
@@ -823,10 +947,27 @@ def run_game(class_key):
         spawn_timer = 0
         wave_banner_timer = 120
         if wave_num % 10 == 0:
+            sounds.play_boss_spawn()
+            trigger_shake(12, 8)
+        else:
+            sounds.play_wave_start()
+        boss = None
+        if wave_num % 10 == 0:
             boss = Boss(player_obj, wave_num)
             boss._net_id = id(boss)
             all_sprites.add(boss)
             enemies_grp.add(boss)
+            # Broadcast boss spawn to clients
+            if net_mode == "host" and net_host:
+                net_host.broadcast(MSG_ENEMY_SPAWN, {
+                    "enemy_id": boss._net_id,
+                    "x": boss.rect.x,
+                    "y": boss.rect.y,
+                    "is_boss": True,
+                    "wave": wave_num,
+                    "max_health": boss.max_health,
+                    "health": boss.health,
+                })
         # Host broadcasts new wave to clients immediately
         if net_mode == "host" and net_host:
             net_host.broadcast(MSG_WAVE_START, {
@@ -851,7 +992,8 @@ def run_game(class_key):
         # ---- EVENTS ----
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit(); sys.exit()
+                pygame.quit();
+                sys.exit()
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     if not spectating:
@@ -860,6 +1002,8 @@ def run_game(class_key):
                             return "main_menu"
                 if event.key == pygame.K_SPACE and not spectating:
                     if player_obj.try_dash():
+                        sounds.play_dash()
+                        trigger_shake(3, 3)
                         # Seed the trail with current position
                         dash_trail.append([player_obj.rect.center, 200, 8])
                 # Spectate: cycle through remote players with arrow keys
@@ -878,167 +1022,250 @@ def run_game(class_key):
         # ---- WAVE SPAWNING ----
         # Clients don't spawn enemies autonomously — the host controls wave state
         # and broadcasts MSG_WAVE_START. Clients receive that and call start_wave().
-        if net_mode != "client":
-            if wave_active:
-                if enemies_spawned < enemies_to_spawn:
-                    spawn_timer += 1
-                    if spawn_timer >= SPAWN_DELAY:
-                        spawn_timer = 0
-                        e = Enemy(player_obj, current_wave)
-                        e._net_id = id(e)  # Unique ID for network reporting
-                        all_sprites.add(e)
-                        enemies_grp.add(e)
-                        enemies_spawned += 1
+        # PAUSE if anyone is choosing an upgrade
+        if upgrade_paused_by:
+            # DEBUG: Show we're paused
+            if getattr(run_game, '_pause_debug_counter', 0) % 60 == 0:  # Print every second
+                print(f"[{net_mode or 'SP'}] PAUSED: upgrade_paused_by = {upgrade_paused_by}")
+            run_game._pause_debug_counter = getattr(run_game, '_pause_debug_counter', 0) + 1
+
+        if not upgrade_paused_by:
+            if net_mode != "client":
+                if wave_active:
+                    if enemies_spawned < enemies_to_spawn:
+                        spawn_timer += 1
+                        if spawn_timer >= SPAWN_DELAY:
+                            spawn_timer = 0
+                            e = Enemy(player_obj, current_wave)
+                            e._net_id = id(e)  # Unique ID for network reporting
+                            all_sprites.add(e)
+                            enemies_grp.add(e)
+                            enemies_spawned += 1
+                            # Broadcast enemy spawn to clients
+                            if net_mode == "host" and net_host:
+                                net_host.broadcast(MSG_ENEMY_SPAWN, {
+                                    "enemy_id": e._net_id,
+                                    "x": e.rect.x,
+                                    "y": e.rect.y,
+                                    "is_boss": False,
+                                    "wave": current_wave,
+                                    "max_health": e.max_health,
+                                    "health": e.health,
+                                })
+                    else:
+                        if len(enemies_grp) == 0:
+                            wave_active = False
+                            wave_cooldown = WAVE_COOLDOWN_TIME
+                            # Tell clients the wave is over
+                            if net_mode == "host" and net_host:
+                                net_host.broadcast(MSG_WAVE_COMPLETE, {"wave": current_wave})
                 else:
-                    if len(enemies_grp) == 0:
-                        wave_active = False
-                        wave_cooldown = WAVE_COOLDOWN_TIME
-                        # Tell clients the wave is over
-                        if net_mode == "host" and net_host:
-                            net_host.broadcast(MSG_WAVE_COMPLETE, {"wave": current_wave})
-            else:
-                wave_cooldown -= 1
-                if wave_cooldown <= 0:
-                    current_wave += 1
-                    start_wave(current_wave)
-        else:
+                    wave_cooldown -= 1
+                    if wave_cooldown <= 0:
+                        current_wave += 1
+                        start_wave(current_wave)
             # Client: just let existing enemies run; wave advancement comes from host
-            pass
 
-        # ---- UPDATE ----
-        if spectating:
-            # Only update non-player sprites (enemies, bullets, gems)
-            enemies_grp.update()
-            bullets_grp.update()
-            gems_grp.update()
-            health_orbs_grp.update()
-        else:
-            all_sprites.update()
-
-        apply_magnet(player_obj, gems_grp)
-
-        # ---- AUTO-FIRE ----
-        if fire_cooldown <= 0:
-            targets = get_nearest_enemies(player_obj, enemies_grp, player_obj.stats["multishot"])
-            if targets:
-                weapon = player_obj.get_weapon_type()
-                for target in targets:
-                    bsize = player_obj.stats.get("bullet_size", 1.0)
-                    if weapon == "laser":
-                        b = LaserBeam(player_obj.rect.center, target.rect.center,
-                                      player_obj.stats["bullet_speed"], player_obj.stats["piercing"],
-                                      size=bsize)
-                    else:
-                        b = Bullet(player_obj.rect.center, target.rect.center,
-                                   player_obj.stats["bullet_speed"], player_obj.stats["piercing"],
-                                   size=bsize)
-                    all_sprites.add(b)
-                    bullets_grp.add(b)
-
-                    # Broadcast bullet to all other players
-                    if net_mode in ("host", "client"):
-                        bullet_data = {
-                            "weapon": weapon,
-                            "bx": player_obj.rect.centerx,
-                            "by": player_obj.rect.centery,
-                            "tx": target.rect.centerx,
-                            "ty": target.rect.centery,
-                            "speed": player_obj.stats["bullet_speed"],
-                            "piercing": player_obj.stats["piercing"],
-                            "damage": player_obj.stats["damage"],
-                            "size": bsize,
-                        }
-                        if net_mode == "host" and net_host:
-                            net_host.broadcast(MSG_BULLET_FIRE, bullet_data)
-                        elif net_mode == "client" and net_client:
-                            net_client.send(MSG_BULLET_FIRE, bullet_data)
-
-                fire_cooldown = player_obj.stats["fire_rate"]
-        else:
-            fire_cooldown -= 1
-
-        # ---- COLLISIONS ----
-
-        # Bullets/Lasers vs Enemies
-        for bullet in list(bullets_grp):
-            hit_list = pygame.sprite.spritecollide(bullet, enemies_grp, False)
-            for enemy in hit_list:
-                if enemy in bullet.hit_enemies:
-                    continue
-                bullet.hit_enemies.append(enemy)
-                # Use network damage if this bullet came from a remote player
-                dmg = getattr(bullet, '_net_damage', None) or player_obj.stats["damage"]
-                dead = enemy.take_damage(dmg)
-                bullet.hits += 1
-                if dead:
-                    # Report kill to host (clients) so host can sync gems/drops
-                    if net_mode == "client" and net_client:
-                        net_client.send(MSG_ENEMY_DEAD, {"enemy_id": getattr(enemy, '_net_id', -1)})
-                    handle_enemy_death(enemy, all_sprites, gems_grp, health_orbs_grp)
-                if bullet.hits >= bullet.piercing:
-                    bullet.kill()
-                    break
-
-        # Tank ram damage
-        if hasattr(player_obj, 'ram_enemy') and player_obj.collision_damage > 0:
-            ram_hits = pygame.sprite.spritecollide(player_obj, enemies_grp, False)
-            for enemy in ram_hits:
-                dead = player_obj.ram_enemy(enemy)
-                if dead:
-                    handle_enemy_death(enemy, all_sprites, gems_grp, health_orbs_grp)
-
-        # Gems
-        gem_hits = pygame.sprite.spritecollide(player_obj, gems_grp, True)
-        for gem in gem_hits:
-            player_obj.current_xp += 1
-            if player_obj.current_xp >= player_obj.xp_to_next_level:
-                player_obj.level += 1
-                player_obj.current_xp = 0
-                player_obj.xp_to_next_level = int(player_obj.xp_to_next_level * 1.5)
-                if player_obj.level % 5 == 0:
-                    show_upgrade_menu(True, player_obj, all_sprites, enemies_grp)
-                else:
-                    show_upgrade_menu(False, player_obj, all_sprites, enemies_grp)
-
-        # Health Orbs
-        orb_hits = pygame.sprite.spritecollide(player_obj, health_orbs_grp, True)
-        for orb in orb_hits:
-            player_obj.heal(orb.heal_amount)
-
-        # Enemies hit Player
-        hit_enemies = pygame.sprite.spritecollide(player_obj, enemies_grp, False)
-        if hit_enemies and not spectating and not player_obj.dash_invincible:
-            now = pygame.time.get_ticks()
-            if now - player_obj.last_hit > 1000:
-                worst_damage = max(e.damage for e in hit_enemies)
-                player_obj.current_health -= worst_damage
-                player_obj.last_hit = now
-                player_obj.set_hurt(True)
-                if player_obj.current_health <= 0:
-                    if net_mode in ("host", "client") and remote_players:
-                        # Enter spectate mode instead of game over
-                        spectating = True
-                        spectate_target_id = next(iter(remote_players))
-                        player_obj.kill()  # Remove from sprite groups
-                    else:
-                        result = show_game_over(player_obj, current_wave)
-                        return result
+            # ---- UPDATE ----
+            if spectating:
+                # Only update non-player sprites (enemies, bullets, gems)
+                enemies_grp.update()
+                bullets_grp.update()
+                gems_grp.update()
+                health_orbs_grp.update()
             else:
-                flicker = (now // 100) % 2 == 0
-                player_obj.set_hurt(flicker)
-        elif not hit_enemies and not spectating:
-            player_obj.set_hurt(False)
+                all_sprites.update()
+
+            apply_magnet(player_obj, gems_grp)
+
+            # ---- AUTO-FIRE ----
+            if fire_cooldown <= 0 and not spectating:
+                targets = get_nearest_enemies(player_obj, enemies_grp, player_obj.stats["multishot"])
+                if targets:
+                    weapon = player_obj.get_weapon_type()
+                    for target in targets:
+                        bsize = player_obj.stats.get("bullet_size", 1.0)
+                        if weapon == "laser":
+                            b = LaserBeam(player_obj.rect.center, target.rect.center,
+                                          player_obj.stats["bullet_speed"], player_obj.stats["piercing"],
+                                          size=bsize)
+                        else:
+                            b = Bullet(player_obj.rect.center, target.rect.center,
+                                       player_obj.stats["bullet_speed"], player_obj.stats["piercing"],
+                                       size=bsize)
+                        all_sprites.add(b)
+                        bullets_grp.add(b)
+
+                        # Broadcast bullet to all other players
+                        if net_mode in ("host", "client"):
+                            bullet_data = {
+                                "weapon": weapon,
+                                "bx": player_obj.rect.centerx,
+                                "by": player_obj.rect.centery,
+                                "tx": target.rect.centerx,
+                                "ty": target.rect.centery,
+                                "speed": player_obj.stats["bullet_speed"],
+                                "piercing": player_obj.stats["piercing"],
+                                "damage": player_obj.stats["damage"],
+                                "size": bsize,
+                            }
+                            if net_mode == "host" and net_host:
+                                net_host.broadcast(MSG_BULLET_FIRE, bullet_data)
+                            elif net_mode == "client" and net_client:
+                                net_client.send(MSG_BULLET_FIRE, bullet_data)
+
+                    fire_cooldown = player_obj.stats["fire_rate"]
+                    if targets:
+                        sounds.play_shoot()
+            else:
+                fire_cooldown -= 1
+
+            # ---- COLLISIONS ----
+
+            # Bullets/Lasers vs Enemies
+            for bullet in list(bullets_grp):
+                hit_list = pygame.sprite.spritecollide(bullet, enemies_grp, False)
+                for enemy in hit_list:
+                    if enemy in bullet.hit_enemies:
+                        continue
+                    bullet.hit_enemies.append(enemy)
+                    # Use network damage if this bullet came from a remote player
+                    dmg = getattr(bullet, '_net_damage', None) or player_obj.stats["damage"]
+                    dead = enemy.take_damage(dmg)
+                    bullet.hits += 1
+                    if dead:
+                        sounds.play_hit()
+                        trigger_shake(4, 4)
+                        # Report kill to host (clients) so host can sync gems/drops
+                        if net_mode == "client" and net_client:
+                            net_client.send(MSG_ENEMY_DEAD, {"enemy_id": getattr(enemy, '_net_id', -1)})
+                        elif net_mode == "host" and net_host:
+                            # Host killed enemy directly — broadcast death
+                            net_host.broadcast(MSG_ENEMY_DEAD, {"enemy_id": getattr(enemy, '_net_id', -1)})
+                        handle_enemy_death(enemy, all_sprites, gems_grp, health_orbs_grp, net_mode, net_host)
+                    if bullet.hits >= bullet.piercing:
+                        bullet.kill()
+                        break
+
+            # Tank ram damage
+            if hasattr(player_obj, 'ram_enemy') and player_obj.collision_damage > 0:
+                ram_hits = pygame.sprite.spritecollide(player_obj, enemies_grp, False)
+                for enemy in ram_hits:
+                    dead = player_obj.ram_enemy(enemy)
+                    if dead:
+                        if net_mode == "client" and net_client:
+                            net_client.send(MSG_ENEMY_DEAD, {"enemy_id": getattr(enemy, '_net_id', -1)})
+                        elif net_mode == "host" and net_host:
+                            net_host.broadcast(MSG_ENEMY_DEAD, {"enemy_id": getattr(enemy, '_net_id', -1)})
+                    handle_enemy_death(enemy, all_sprites, gems_grp, health_orbs_grp, net_mode, net_host)
+
+            # Gems
+            gem_hits = pygame.sprite.spritecollide(player_obj, gems_grp, True)
+            for gem in gem_hits:
+                sounds.play_gem()
+                if net_mode in ("host", "client"):
+                    # Multiplayer: report gem to host for party XP
+                    if net_mode == "host":
+                        party_xp += 1
+                        # Check for party level up (host only)
+                        if party_xp >= party_xp_to_next:
+                            party_level += 1
+                            party_xp = 0
+                            party_xp_to_next = int(party_xp_to_next * 1.5)
+                            is_big = party_level % 5 == 0
+                            # Reset pending players set (host + all connected clients)
+                            upgrade_pending_players = {0}  # Host is player 0
+                            upgrade_pending_players.update(net_host.get_remote_states().keys())
+                            # Broadcast party level up to everyone
+                            net_host.broadcast(MSG_PARTY_LEVEL_UP, {
+                                "level": party_level,
+                                "is_big": is_big,
+                            })
+                            sounds.play_level_up()
+                            # Host opens own upgrade menu
+                            show_upgrade_menu(is_big, player_obj, all_sprites, enemies_grp, net_mode, net_host,
+                                              net_client)
+                            # Remove self from pending set
+                            upgrade_pending_players.discard(0)
+                            # If no other players, resume immediately
+                            if not upgrade_pending_players:
+                                net_host.broadcast(MSG_UPGRADE_RESUME, {})
+                            else:
+                                net_host.broadcast(MSG_UPGRADE_PAUSE, {"player_name": "Party", "level": party_level})
+                    elif net_mode == "client":
+                        # Send gem pickup to host
+                        net_client.send(MSG_GEM_COLLECT, {})
+                else:
+                    # Singleplayer: local XP
+                    player_obj.current_xp += 1
+                    if player_obj.current_xp >= player_obj.xp_to_next_level:
+                        player_obj.level += 1
+                        player_obj.current_xp = 0
+                        player_obj.xp_to_next_level = int(player_obj.xp_to_next_level * 1.5)
+                        sounds.play_level_up()
+                        if player_obj.level % 5 == 0:
+                            show_upgrade_menu(True, player_obj, all_sprites, enemies_grp, net_mode, net_host,
+                                              net_client)
+                        else:
+                            show_upgrade_menu(False, player_obj, all_sprites, enemies_grp, net_mode, net_host,
+                                              net_client)
+
+            # Health Orbs
+            orb_hits = pygame.sprite.spritecollide(player_obj, health_orbs_grp, True)
+            for orb in orb_hits:
+                player_obj.heal(orb.heal_amount)
+
+            # Enemies hit Player
+            hit_enemies = pygame.sprite.spritecollide(player_obj, enemies_grp, False)
+            if hit_enemies and not spectating and not player_obj.dash_invincible:
+                now = pygame.time.get_ticks()
+                if now - player_obj.last_hit > 1000:
+                    worst_damage = max(e.damage for e in hit_enemies)
+                    player_obj.current_health -= worst_damage
+                    player_obj.last_hit = now
+                    player_obj.set_hurt(True)
+                    sounds.play_hurt()
+                    trigger_shake(8, 6)
+                    if player_obj.current_health <= 0:
+                        sounds.play_death()
+                        if net_mode in ("host", "client") and remote_players:
+                            # Enter spectate mode instead of game over
+                            spectating = True
+                            spectate_target_id = next(iter(remote_players))
+                            player_obj.kill()  # Remove from sprite groups
+                        else:
+                            result = show_game_over(player_obj, current_wave)
+                            return result
+                else:
+                    flicker = (now // 100) % 2 == 0
+                    player_obj.set_hurt(flicker)
+            elif not hit_enemies and not spectating:
+                player_obj.set_hurt(False)
 
         # ---- DRAW ----
         surf.fill(BLACK)
 
+        # Screen shake offset
+        global _shake_frames, _shake_intensity
+        shake_x, shake_y = 0, 0
+        if _shake_frames > 0:
+            shake_x = random.randint(-_shake_intensity, _shake_intensity)
+            shake_y = random.randint(-_shake_intensity, _shake_intensity)
+            _shake_frames -= 1
+            if _shake_frames == 0:
+                _shake_intensity = 0
+
+        # We blit everything to a temp surface then offset it
+        shake_surf = pygame.Surface((sw, sh))
+        shake_surf.fill(BLACK)
+
         # Magnet ring (behind sprites)
         if not spectating:
-            player_obj.draw_magnet_ring(surf)
+            player_obj.draw_magnet_ring(shake_surf)
 
         # Tank ram aura
         if not spectating and hasattr(player_obj, 'draw_ram_aura'):
-            player_obj.draw_ram_aura(surf)
+            player_obj.draw_ram_aura(shake_surf)
 
         # Dash trail
         if player_obj.dash_duration > 0 or dash_trail:
@@ -1049,14 +1276,14 @@ def run_game(class_key):
             if alpha > 0:
                 ts = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
                 pygame.draw.circle(ts, (100, 200, 255, alpha), (radius, radius), radius)
-                surf.blit(ts, (pos[0] - radius, pos[1] - radius))
+                shake_surf.blit(ts, (pos[0] - radius, pos[1] - radius))
                 trail_entry[1] = max(0, alpha - 30)
                 trail_entry[2] = max(1, radius - 1)
                 new_trail.append(trail_entry)
         dash_trail[:] = new_trail
 
-        all_sprites.draw(surf)
-        draw_enemy_health_bars(surf, enemies_grp)
+        all_sprites.draw(shake_surf)
+        draw_enemy_health_bars(shake_surf, enemies_grp)
 
         # ========== NETWORKING ==========
         net_send_timer = getattr(run_game, '_net_timer', 0)
@@ -1075,6 +1302,24 @@ def run_game(class_key):
                     "username": local_username,
                 })
 
+            # Broadcast enemy positions every 5 frames (15fps sync)
+            enemy_timer = getattr(run_game, '_enemy_timer', 0)
+            enemy_timer += 1
+            if enemy_timer >= 5:
+                enemy_timer = 0
+                enemy_states = []
+                for e in enemies_grp:
+                    enemy_states.append({
+                        "enemy_id": getattr(e, '_net_id', id(e)),
+                        "x": e.rect.x,
+                        "y": e.rect.y,
+                        "health": e.health,
+                        "max_health": e.max_health,
+                    })
+                if enemy_states:
+                    net_host.broadcast(MSG_ENEMY_UPDATE, {"enemies": enemy_states})
+            run_game._enemy_timer = enemy_timer
+
             for msg in net_host.get_messages():
                 msg_type = msg.get("type", "")
                 data = msg.get("data", {})
@@ -1088,7 +1333,7 @@ def run_game(class_key):
                     bspd = data.get("speed", 7)
                     bprc = data.get("piercing", 1)
                     bdmg = data.get("damage", 1)
-                    bsz  = data.get("size", 1.0)
+                    bsz = data.get("size", 1.0)
                     if btype == "laser":
                         rb = LaserBeam(bpos, tpos, bspd, bprc, size=bsz)
                     else:
@@ -1102,9 +1347,48 @@ def run_game(class_key):
                     eid = data.get("enemy_id", -1)
                     for e in list(enemies_grp):
                         if getattr(e, '_net_id', None) == eid:
-                            handle_enemy_death(e, all_sprites, gems_grp, health_orbs_grp)
+                            handle_enemy_death(e, all_sprites, gems_grp, health_orbs_grp, net_mode, net_host)
                             e.kill()
+                            # Broadcast death to all clients so they remove their ghost
+                            net_host.broadcast(MSG_ENEMY_DEAD, {"enemy_id": eid})
                             break
+
+                elif msg_type == MSG_GEM_COLLECT:
+                    # Client picked up a gem — add to party XP
+                    party_xp += 1
+                    if party_xp >= party_xp_to_next:
+                        party_level += 1
+                        party_xp = 0
+                        party_xp_to_next = int(party_xp_to_next * 1.5)
+                        is_big = party_level % 5 == 0
+                        # Reset pending players (host + all clients)
+                        upgrade_pending_players = {0}
+                        upgrade_pending_players.update(net_host.get_remote_states().keys())
+                        # Broadcast level up
+                        net_host.broadcast(MSG_PARTY_LEVEL_UP, {
+                            "level": party_level,
+                            "is_big": is_big,
+                        })
+                        sounds.play_level_up()
+                        # Host opens own upgrade menu
+                        show_upgrade_menu(is_big, player_obj, all_sprites, enemies_grp, net_mode, net_host, net_client)
+                        # Remove self from pending
+                        upgrade_pending_players.discard(0)
+                        # If no other players, resume immediately
+                        if not upgrade_pending_players:
+                            upgrade_paused_by = None
+                            net_host.broadcast(MSG_UPGRADE_RESUME, {})
+                        else:
+                            upgrade_paused_by = {"player_name": "Party", "level": party_level}
+                            net_host.broadcast(MSG_UPGRADE_PAUSE, {"player_name": "Party", "level": party_level})
+
+                elif msg_type == MSG_UPGRADE_DONE:
+                    # Client finished picking upgrade
+                    upgrade_pending_players.discard(from_id)
+                    if not upgrade_pending_players:
+                        # Everyone done — resume game
+                        upgrade_paused_by = None
+                        net_host.broadcast(MSG_UPGRADE_RESUME, {})
 
             # --- Host: update & broadcast remote player ghosts ---
             usernames = net_host.get_usernames()
@@ -1128,6 +1412,9 @@ def run_game(class_key):
                     "wave": current_wave,
                     "active": wave_active,
                     "enemies_remaining": len(enemies_grp),
+                    "party_level": party_level,
+                    "party_xp": party_xp,
+                    "party_xp_to_next": party_xp_to_next,
                 })
 
         elif net_mode == "client" and net_client:
@@ -1167,7 +1454,7 @@ def run_game(class_key):
                     bspd = data.get("speed", 7)
                     bprc = data.get("piercing", 1)
                     bdmg = data.get("damage", 1)
-                    bsz  = data.get("size", 1.0)
+                    bsz = data.get("size", 1.0)
                     if btype == "laser":
                         rb = LaserBeam(bpos, tpos, bspd, bprc, size=bsz)
                     else:
@@ -1176,15 +1463,99 @@ def run_game(class_key):
                     all_sprites.add(rb)
                     bullets_grp.add(rb)
 
+                elif msg_type == MSG_ENEMY_SPAWN:
+                    # Host spawned an enemy — create a ghost
+                    eid = data.get("enemy_id")
+                    x = data.get("x", 0)
+                    y = data.get("y", 0)
+                    is_boss = data.get("is_boss", False)
+                    wave = data.get("wave", 1)
+                    max_hp = data.get("max_health", 1)
+                    hp = data.get("health", 1)
+                    ghost = RemoteEnemyGhost(eid, x, y, is_boss, wave)
+                    ghost.max_health = max_hp
+                    ghost.health = hp
+                    remote_enemies[eid] = ghost
+                    all_sprites.add(ghost)
+                    enemies_grp.add(ghost)
+
+                elif msg_type == MSG_ENEMY_UPDATE:
+                    # Host sent enemy position updates
+                    enemy_list = data.get("enemies", [])
+                    for edata in enemy_list:
+                        eid = edata.get("enemy_id")
+                        if eid in remote_enemies:
+                            remote_enemies[eid].update_from_state(edata)
+
+                elif msg_type == MSG_ENEMY_DEAD:
+                    # Host says enemy died — remove ghost
+                    eid = data.get("enemy_id")
+                    if eid in remote_enemies:
+                        remote_enemies[eid].kill()
+                        del remote_enemies[eid]
+
+                elif msg_type == MSG_GEM_SPAWN:
+                    # Host spawned gems — create them locally
+                    positions = data.get("positions", [])
+                    for pos in positions:
+                        gem = ExpGem(pos)
+                        all_sprites.add(gem)
+                        gems_grp.add(gem)
+
+                elif msg_type == MSG_ORB_SPAWN:
+                    # Host spawned health orb — create it locally
+                    x = data.get("x", 0)
+                    y = data.get("y", 0)
+                    heal = data.get("heal", 20)
+                    orb = HealthOrb((x, y))
+                    orb.heal_amount = heal
+                    all_sprites.add(orb)
+                    health_orbs_grp.add(orb)
+
+                elif msg_type == MSG_PARTY_LEVEL_UP:
+                    # Party leveled up — open upgrade menu
+                    # Update party XP variables (nonlocal to update run_game scope)
+                    party_level = data.get("level", 1)
+                    party_xp = 0  # Reset after level up
+                    party_xp_to_next = int(party_xp_to_next * 1.5)  # Increase threshold
+                    is_big = data.get("is_big", False)
+                    sounds.play_level_up()
+                    show_upgrade_menu(is_big, player_obj, all_sprites, enemies_grp, net_mode, net_host, net_client)
+
+                elif msg_type == MSG_UPGRADE_PAUSE:
+                    # Upgrade pause (party is choosing)
+                    print(f"[Client] Received MSG_UPGRADE_PAUSE: {data}")  # DEBUG
+                    upgrade_paused_by = {
+                        "player_name": data.get("player_name", "Party"),
+                        "level": data.get("level", 1)
+                    }
+                    print(f"[Client] Set upgrade_paused_by = {upgrade_paused_by}")  # DEBUG
+
+                elif msg_type == MSG_UPGRADE_RESUME:
+                    # All players finished choosing
+                    print(f"[Client] Received MSG_UPGRADE_RESUME")  # DEBUG
+                    upgrade_paused_by = None
+                    print(f"[Client] Cleared upgrade_paused_by")  # DEBUG
+
                 elif msg_type == MSG_WAVE_START:
-                    # Host told us which wave we're on
+                    # Host told us which wave we're on + party XP state
                     srv_wave = data.get("wave", current_wave)
+
+                    # Update party XP from host
+                    if "party_level" in data:
+                        party_level = data["party_level"]
+                    if "party_xp" in data:
+                        party_xp = data["party_xp"]
+                    if "party_xp_to_next" in data:
+                        party_xp_to_next = data["party_xp_to_next"]
+
                     if srv_wave != current_wave:
                         # Advance to the host's wave
                         current_wave = srv_wave
                         # Clear existing enemies so we don't double-spawn
                         for e in list(enemies_grp):
                             e.kill()
+                        remote_enemies.clear()
                         start_wave(current_wave)
 
                 elif msg_type == MSG_WAVE_COMPLETE:
@@ -1207,10 +1578,32 @@ def run_game(class_key):
 
         run_game._net_timer = net_send_timer
 
+        # ========== BLIT GAME WORLD WITH SHAKE OFFSET ==========
+        surf.blit(shake_surf, (shake_x, shake_y))
+
         # ========== DRAW REMOTE PLAYERS ==========
         for pid, ghost in remote_players.items():
             surf.blit(ghost.image, ghost.rect)
             ghost.draw_label(surf)
+
+        # ========== UPGRADE PAUSE OVERLAY ==========
+        if upgrade_paused_by and not spectating:
+            # Semi-transparent overlay
+            pause_overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
+            pause_overlay.fill((0, 0, 0, 150))
+            surf.blit(pause_overlay, (0, 0))
+
+            # Message
+            pname = upgrade_paused_by.get("player_name", "Player")
+            plevel = upgrade_paused_by.get("level", 1)
+            wait_txt = title_font.render(f"{pname} is choosing upgrade...", True, GOLD)
+            surf.blit(wait_txt, (sw // 2 - wait_txt.get_width() // 2, sh // 2 - 80))
+            lvl_txt = small_font.render(f"Level {plevel}", True, GRAY)
+            surf.blit(lvl_txt, (sw // 2 - lvl_txt.get_width() // 2, sh // 2 - 30))
+
+            # Debug indicator showing game is paused
+            paused_txt = title_font.render("GAME PAUSED", True, RED)
+            surf.blit(paused_txt, (sw // 2 - paused_txt.get_width() // 2, sh // 2 + 20))
 
         # ========== SPECTATE OVERLAY ==========
         if spectating:
@@ -1235,7 +1628,7 @@ def run_game(class_key):
             surf.blit(wave_txt, (sw // 2 - wave_txt.get_width() // 2, sh // 2 + 10))
         else:
             # ========== DRAW UI ==========
-            draw_ui(surf, player_obj, current_wave, enemies_grp)
+            draw_ui(surf, player_obj, current_wave, enemies_grp, net_mode, party_level, party_xp, party_xp_to_next)
             draw_boss_health_bar(surf, enemies_grp)
 
             # Dash cooldown bar (bottom-centre)
@@ -1271,6 +1664,68 @@ def run_game(class_key):
         clock.tick(FPS)
 
     return "main_menu"
+
+
+class RemoteEnemyGhost(pygame.sprite.Sprite):
+    """Client-side mirror of a host's enemy. No AI, just visual tracking."""
+
+    def __init__(self, enemy_id, x, y, is_boss=False, wave=1):
+        super().__init__()
+        self.enemy_id = enemy_id
+        self.is_boss = is_boss
+        self.target_x = x
+        self.target_y = y
+        self.max_health = 1
+        self.health = 1
+        self.damage = 25 if is_boss else 10
+
+        size = (50, 50) if is_boss else (30, 30)
+        color = PURPLE if is_boss else RED
+        fname = "boss.png" if is_boss else "enemy_basic.png"
+        self.image = load_sprite(fname, size, color, size)
+        self.image.set_alpha(200)
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
+
+    def update_from_state(self, state):
+        self.target_x = state.get("x", self.target_x)
+        self.target_y = state.get("y", self.target_y)
+        self.health = state.get("health", self.health)
+        self.max_health = state.get("max_health", self.max_health)
+
+    def update(self):
+        # Smooth interpolation to reduce jitter
+        self.rect.x += (self.target_x - self.rect.x) * 0.4
+        self.rect.y += (self.target_y - self.rect.y) * 0.4
+
+    def take_damage(self, amount):
+        """Mirror method — doesn't actually do damage calc, just for interface compatibility."""
+        pass
+
+    def draw_health_bar(self, surf):
+        """Draw health bar above enemy ghost."""
+        if self.health >= self.max_health:
+            return
+
+        bar_width = self.rect.width
+        bar_height = 5
+        bar_x = self.rect.x
+        bar_y = self.rect.y - 8
+
+        hp_ratio = max(0, self.health / max(1, self.max_health))
+
+        if hp_ratio > 0.5:
+            color = GREEN
+        elif hp_ratio > 0.25:
+            color = YELLOW
+        else:
+            color = RED
+
+        pygame.draw.rect(surf, DARK_GRAY, (bar_x, bar_y, bar_width, bar_height))
+        pygame.draw.rect(surf, color, (bar_x, bar_y, int(bar_width * hp_ratio), bar_height))
+        pygame.draw.rect(surf, WHITE, (bar_x, bar_y, bar_width, bar_height), 1)
+
 
 class RemotePlayerGhost(pygame.sprite.Sprite):
     """Visual representation of another player in multiplayer."""
@@ -1393,7 +1848,8 @@ def show_username_input():
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit(); sys.exit()
+                pygame.quit();
+                sys.exit()
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_RETURN:
                     if username.strip():
@@ -1520,7 +1976,8 @@ def show_multiplayer_menu():
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit(); sys.exit()
+                pygame.quit();
+                sys.exit()
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     return None, None
@@ -1596,7 +2053,7 @@ def show_multiplayer_menu():
         clock.tick(30)
 
 
-#LOBBIES
+# LOBBIES
 
 def show_lobby():
     """Multiplayer lobby — wait for players, then start."""
@@ -1708,6 +2165,7 @@ def show_lobby():
 
         clock_lobby.tick(30)
 
+
 # ===========================================================
 #                   APP ENTRY POINT
 # ===========================================================
@@ -1732,6 +2190,7 @@ def main():
             net_mode = None
             class_key = show_class_selection()
             remote_players = {}
+            remote_enemies = {}
             game_result = run_game(class_key)
             if game_result == "restart":
                 continue
@@ -1758,6 +2217,7 @@ def main():
                 if lobby_result == "start":
                     class_key = show_class_selection()
                     remote_players = {}
+                    remote_enemies = {}
                     game_result = run_game(class_key)
 
                     if net_host:

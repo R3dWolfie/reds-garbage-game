@@ -21,6 +21,7 @@ class PlayerDefault(PlayerBase):
         "damage": 1,
         "piercing": 1,
         "magnet": 0,
+        "bullet_size": 1,
     }
 
     def get_weapon_type(self):
