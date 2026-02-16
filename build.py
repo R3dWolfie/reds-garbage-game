@@ -33,6 +33,8 @@ def build():
         '--hidden-import', 'updater',
         '--hidden-import', 'updater.version',
         '--hidden-import', 'updater.updater',
+        '--hidden-import', 'numpy',
+        '--hidden-import', 'pygame.sndarray',
     ]
 
     if ICON and os.path.exists(ICON):
