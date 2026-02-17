@@ -78,8 +78,14 @@ def _get_install_dir():
 
 
 def _get_staging_dir():
-    """Get the staging directory path."""
-    return os.path.join(_get_install_dir(), STAGING_DIR_NAME)
+    """Get the staging directory path. Uses temp dir if install dir isn't writable."""
+    install_dir = _get_install_dir()
+    if os.access(install_dir, os.W_OK):
+        return os.path.join(install_dir, STAGING_DIR_NAME)
+    else:
+        # Install dir not writable (e.g. /Applications on macOS)
+        import tempfile
+        return os.path.join(tempfile.gettempdir(), "rgg_" + STAGING_DIR_NAME)
 
 
 def _compare_versions(local, remote):
@@ -447,7 +453,6 @@ del "%~f0" >nul 2>&1
 
 def _apply_unix(install_dir, staging):
     """Write a shell script for Linux/Mac that preserves permissions."""
-    sh_path = os.path.join(install_dir, "_apply_update.sh")
 
     if getattr(sys, 'frozen', False):
         exe = sys.executable
@@ -472,8 +477,56 @@ def _apply_unix(install_dir, staging):
                 break
             path = os.path.dirname(path)
 
-    # Use cp -a to preserve permissions and symlinks
-    sh_content = f'''#!/bin/bash
+    # Check if install dir is writable
+    needs_sudo = not os.access(install_dir, os.W_OK)
+
+    if needs_sudo and platform.system() == "Darwin":
+        # macOS: use osascript to prompt for admin password
+        # Write the update script to a temp location (always writable)
+        import tempfile
+        sh_path = os.path.join(tempfile.gettempdir(), "_rgg_apply_update.sh")
+
+        sh_content = f'''#!/bin/bash
+sleep 2
+
+# Copy staged files with admin privileges
+cp -af "{staging}/"* "{install_dir}/"
+
+# Write success marker
+echo "done" > "{os.path.join(install_dir, '_update_done.marker')}"
+
+# Clean up staging
+rm -rf "{staging}"
+
+# Relaunch (as normal user, not root)
+sudo -u "$USER" {launch_cmd}
+
+# Self-delete
+rm -f "$0"
+'''
+        try:
+            with open(sh_path, 'w') as f:
+                f.write(sh_content)
+            os.chmod(sh_path, 0o755)
+            print(f"[Updater] Needs admin permissions, prompting...")
+
+            # Use osascript to run the shell script with admin privileges
+            # This shows the native macOS password prompt
+            subprocess.Popen([
+                'osascript', '-e',
+                f'do shell script "/bin/bash \\"{sh_path}\\"" with administrator privileges'
+            ])
+            print("[Updater] Update script launched with admin, exiting game...")
+            _exit_game()
+            return True
+        except Exception as e:
+            print(f"[Updater] Failed to launch admin update: {e}")
+            return False
+    else:
+        # Normal case: install dir is writable (Linux, or macOS in ~/Applications)
+        sh_path = os.path.join(install_dir, "_apply_update.sh")
+
+        sh_content = f'''#!/bin/bash
 sleep 2
 
 # Copy staged files, preserving permissions and symlinks
@@ -493,20 +546,20 @@ cd "{exe_dir}"
 rm -f "$0"
 '''
 
-    try:
-        with open(sh_path, 'w') as f:
-            f.write(sh_content)
-        os.chmod(sh_path, 0o755)
-        print(f"[Updater] Wrote update script: {sh_path}")
+        try:
+            with open(sh_path, 'w') as f:
+                f.write(sh_content)
+            os.chmod(sh_path, 0o755)
+            print(f"[Updater] Wrote update script: {sh_path}")
 
-        subprocess.Popen(['/bin/bash', sh_path], cwd=install_dir)
-        print("[Updater] Update script launched, exiting game...")
-        _exit_game()
-        return True
+            subprocess.Popen(['/bin/bash', sh_path], cwd=install_dir)
+            print("[Updater] Update script launched, exiting game...")
+            _exit_game()
+            return True
 
-    except Exception as e:
-        print(f"[Updater] Failed to write update script: {e}")
-        return False
+        except Exception as e:
+            print(f"[Updater] Failed to write update script: {e}")
+            return False
 
 
 def _exit_game():
