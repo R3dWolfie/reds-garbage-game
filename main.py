@@ -33,7 +33,10 @@ def _show_restart_prompt(running_ver, disk_ver):
         else:
             main_py = os.path.join(install_dir, "main.py")
             subprocess.Popen([sys.executable, main_py], cwd=install_dir)
-        pygame.display.quit()
+        try:
+            pygame.display.quit()
+        except Exception:
+            pass
         pygame.quit()
         os._exit(0)
     except Exception as e:
@@ -89,7 +92,14 @@ def main():
     try:
         from updater.version import VERSION as RUNNING_VERSION
         import os
-        version_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "updater", "version.py")
+        # Find where source files actually live
+        if getattr(sys, 'frozen', False):
+            base = os.path.join(os.path.dirname(sys.executable), "_internal")
+            if not os.path.isdir(base):
+                base = os.path.dirname(sys.executable)
+        else:
+            base = os.path.dirname(os.path.abspath(__file__))
+        version_file = os.path.join(base, "updater", "version.py")
         disk_version = None
         if os.path.exists(version_file):
             with open(version_file, 'r') as f:

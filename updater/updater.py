@@ -25,9 +25,14 @@ STAGING_DIR_NAME = "_update_staging"
 
 
 def _get_install_dir():
-    """Get the root install directory of the game."""
+    """Get the directory where Python source files live."""
     if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
+        # PyInstaller puts Python files in _internal/ next to the .exe
+        exe_dir = os.path.dirname(sys.executable)
+        internal = os.path.join(exe_dir, "_internal")
+        if os.path.isdir(internal):
+            return internal
+        return exe_dir
     else:
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -221,12 +226,14 @@ def _apply_windows(install_dir, staging):
 
     # Figure out what to launch after update
     if getattr(sys, 'frozen', False):
-        exe_name = os.path.basename(sys.executable)
-        launch_cmd = f'start "" "{exe_name}"'
+        exe_path = sys.executable  # Full path to the .exe
+        exe_dir = os.path.dirname(exe_path)
+        launch_cmd = f'start "" "{exe_path}"'
     else:
         main_py = os.path.join(install_dir, "main.py")
         python_exe = sys.executable.replace('"', '""')
         launch_cmd = f'start "" "{python_exe}" "{main_py}"'
+        exe_dir = install_dir
 
     # Batch script: wait, xcopy, marker, relaunch, self-delete
     bat_content = f'''@echo off
@@ -249,7 +256,7 @@ echo done > "{os.path.join(install_dir, '_update_done.marker')}"
 rmdir /S /Q "{staging}" >nul 2>&1
 
 :: Relaunch the game
-cd /d "{install_dir}"
+cd /d "{exe_dir}"
 {launch_cmd}
 
 :: Delete this script
@@ -281,18 +288,20 @@ def _apply_unix(install_dir, staging):
     sh_path = os.path.join(install_dir, "_apply_update.sh")
 
     if getattr(sys, 'frozen', False):
-        exe = os.path.join(install_dir, os.path.basename(sys.executable))
+        exe = sys.executable  # Full path
         launch_cmd = f'"{exe}" &'
     else:
         main_py = os.path.join(install_dir, "main.py")
         launch_cmd = f'"{sys.executable}" "{main_py}" &'
+
+    exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else install_dir
 
     sh_content = f'''#!/bin/bash
 sleep 2
 cp -rf "{staging}/"* "{install_dir}/"
 echo "done" > "{os.path.join(install_dir, '_update_done.marker')}"
 rm -rf "{staging}"
-cd "{install_dir}"
+cd "{exe_dir}"
 {launch_cmd}
 rm -f "$0"
 '''
