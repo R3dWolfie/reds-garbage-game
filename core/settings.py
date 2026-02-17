@@ -157,14 +157,18 @@ def get_max_monitor_resolution():
             info = pygame.display.Info()
             _max_monitor_res = (info.current_w, info.current_h)
 
-        # macOS Retina: pygame reports "points" not pixels
-        # A 2560x1600 Retina display reports as 1440x900
-        # Multiply by 2 to get actual pixel resolution
+        # macOS Retina: pygame.display.get_desktop_sizes() returns "points" not pixels
+        # But list_modes() returns actual pixel resolutions
         if platform.system() == "Darwin":
-            w, h = _max_monitor_res
-            # Check if this looks like a scaled Retina resolution
-            # Most Mac displays are at least 1920px wide in actual pixels
-            if w <= 1440:
+            try:
+                modes = pygame.display.list_modes()
+                if modes and modes != -1 and len(modes) > 0:
+                    # list_modes returns actual pixel resolutions, sorted largest first
+                    _max_monitor_res = modes[0]
+                    print(f"[Settings] macOS: using list_modes max: {_max_monitor_res}")
+            except Exception:
+                # Fallback: double the point resolution
+                w, h = _max_monitor_res
                 _max_monitor_res = (w * 2, h * 2)
     except Exception:
         _max_monitor_res = (1920, 1080)
