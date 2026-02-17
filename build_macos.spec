@@ -20,6 +20,7 @@ a = Analysis(
     hiddenimports=[
         'pygame',
         'numpy',
+        'certifi',
         'core',
         'core.settings',
         'core.game_state',

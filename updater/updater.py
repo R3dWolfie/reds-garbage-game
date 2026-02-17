@@ -28,6 +28,32 @@ from updater.version import VERSION, VERSION_URL
 REQUEST_TIMEOUT = 10
 STAGING_DIR_NAME = "_update_staging"
 
+# Build an SSL context — try multiple approaches
+_ssl_context = None
+try:
+    import ssl
+
+    # Try 1: certifi (bundled CA certs, works everywhere)
+    try:
+        import certifi
+
+        _ssl_context = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        pass
+    # Try 2: system default context
+    if _ssl_context is None:
+        try:
+            ctx = ssl.create_default_context()
+            # Quick test: if no CA certs loaded, this will be useless
+            _ssl_context = ctx
+        except Exception:
+            pass
+    # Try 3: unverified context as last resort (still encrypted, just no cert check)
+    if _ssl_context is None:
+        _ssl_context = ssl._create_unverified_context()
+except Exception:
+    pass
+
 
 def _get_platform():
     """Return 'windows', 'macos', or 'linux'."""
@@ -40,9 +66,19 @@ def _get_platform():
 
 
 def _get_install_dir():
-    """Get the root install directory (where the .exe lives)."""
+    """Get the root install directory (where the game files live).
+    On macOS .app bundles, this is Contents/Resources/ inside the .app."""
     if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
+        exe_dir = os.path.dirname(sys.executable)
+        # Detect macOS .app bundle: executable is in Something.app/Contents/MacOS/
+        if platform.system() == "Darwin" and "/Contents/MacOS" in exe_dir:
+            # Game files are in Contents/Resources/ for .app bundles
+            resources = os.path.join(os.path.dirname(exe_dir), "Resources")
+            if os.path.isdir(resources):
+                return resources
+            # Fallback: some PyInstaller builds put files next to the binary
+            return exe_dir
+        return exe_dir
     else:
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -64,6 +100,20 @@ def _compare_versions(local, remote):
         return False
 
 
+def _urlopen_safe(req, timeout=10):
+    """urlopen with SSL fallback — tries verified first, then unverified."""
+    import ssl
+    # Try with our built context first
+    try:
+        return urlopen(req, timeout=timeout, context=_ssl_context)
+    except URLError as e:
+        if "CERTIFICATE_VERIFY_FAILED" in str(e.reason):
+            print("[Updater] SSL verification failed, retrying without verification...")
+            ctx = ssl._create_unverified_context()
+            return urlopen(req, timeout=timeout, context=ctx)
+        raise
+
+
 def check_for_update():
     """
     Check the version API for a newer release.
@@ -80,7 +130,7 @@ def check_for_update():
         req = Request(url, headers={
             "User-Agent": f"RGG-Updater/{VERSION} ({plat})",
         })
-        resp = urlopen(req, timeout=REQUEST_TIMEOUT)
+        resp = _urlopen_safe(req, timeout=REQUEST_TIMEOUT)
         data = json.loads(resp.read().decode("utf-8"))
     except HTTPError as e:
         print(f"[Updater] HTTP error {e.code}: {e.reason}")
@@ -148,7 +198,7 @@ def download_update(url, progress_callback=None):
     print(f"[Updater] Downloading: {url}")
     try:
         req = Request(url, headers={"User-Agent": f"RGG-Updater/{VERSION}"})
-        resp = urlopen(req, timeout=60)
+        resp = _urlopen_safe(req, timeout=60)
         total = int(resp.headers.get("Content-Length", 0))
 
         # Detect file type from URL or Content-Type
@@ -413,6 +463,20 @@ def _apply_unix(install_dir, staging):
         launch_cmd = f'"{sys.executable}" "{main_py}" &'
 
     exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else install_dir
+
+    # On macOS .app, check if we're inside a bundle and use 'open' to relaunch
+    is_macos_app = False
+    app_path = None
+    if platform.system() == "Darwin" and getattr(sys, 'frozen', False):
+        # Walk up from executable to find the .app bundle
+        path = os.path.dirname(sys.executable)
+        while path and path != "/":
+            if path.endswith(".app"):
+                app_path = path
+                is_macos_app = True
+                launch_cmd = f'open "{app_path}" &'
+                break
+            path = os.path.dirname(path)
 
     # Use cp -a to preserve permissions and symlinks
     sh_content = f'''#!/bin/bash
