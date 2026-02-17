@@ -54,6 +54,8 @@ class DisplayManager:
         self.screen = None
         self._actual_w = 1920
         self._actual_h = 1080
+        self._windowed = False
+        self._render_surface = None
         self.apply()
 
     def apply(self):
@@ -68,21 +70,35 @@ class DisplayManager:
         internal_w = settings_module.INTERNAL_WIDTH
         internal_h = settings_module.INTERNAL_HEIGHT
 
-        # pygame.SCALED: renders at internal_w x internal_h, then
-        # scales output to the actual window/fullscreen size
-        flags = pygame.SCALED
         if fullscreen:
-            flags |= pygame.FULLSCREEN
-        if borderless and not fullscreen:
-            flags |= pygame.NOFRAME
-
-        try:
-            self.screen = pygame.display.set_mode((internal_w, internal_h), flags)
-        except Exception:
+            # Fullscreen: use SCALED to auto-fit the monitor
+            flags = pygame.SCALED | pygame.FULLSCREEN
             try:
-                self.screen = pygame.display.set_mode((internal_w, internal_h))
+                self.screen = pygame.display.set_mode((internal_w, internal_h), flags)
             except Exception:
-                self.screen = pygame.display.set_mode((1920, 1080))
+                try:
+                    self.screen = pygame.display.set_mode((internal_w, internal_h), pygame.FULLSCREEN)
+                except Exception:
+                    self.screen = pygame.display.set_mode((internal_w, internal_h))
+            self._windowed = False
+            self._render_surface = None
+        else:
+            # Windowed: create window at selected resolution
+            flags = 0
+            if borderless:
+                flags |= pygame.NOFRAME
+
+            try:
+                self.screen = pygame.display.set_mode((display_w, display_h), flags)
+            except Exception:
+                try:
+                    self.screen = pygame.display.set_mode((1920, 1080), flags)
+                except Exception:
+                    self.screen = pygame.display.set_mode((1920, 1080))
+
+            self._windowed = True
+            # Create internal render surface at 1920x1080
+            self._render_surface = pygame.Surface((internal_w, internal_h))
 
         pygame.display.set_caption("Red's Garbage Game")
 
@@ -106,9 +122,22 @@ class DisplayManager:
             pass
 
     def get_screen(self):
+        """Return the surface to draw on. In windowed mode, this is the
+        internal render surface (1920x1080). In fullscreen, it's the display."""
+        if self._windowed and self._render_surface is not None:
+            return self._render_surface
         return self.screen
 
     def present(self):
+        """Present the frame. In windowed mode, scale internal surface to window."""
+        if self._windowed and self._render_surface is not None:
+            # Scale 1920x1080 render to the actual window size
+            win_w, win_h = self.screen.get_size()
+            if (win_w, win_h) != (self._render_surface.get_width(), self._render_surface.get_height()):
+                scaled = pygame.transform.smoothscale(self._render_surface, (win_w, win_h))
+                self.screen.blit(scaled, (0, 0))
+            else:
+                self.screen.blit(self._render_surface, (0, 0))
         pygame.display.flip()
 
     def set_resolution(self, res):

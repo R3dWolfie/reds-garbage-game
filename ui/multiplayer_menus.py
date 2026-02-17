@@ -835,9 +835,12 @@ def _draw_direct_panel(surf, sw, sh, content_y, mx, my, t, ip_input, password, a
 def show_lobby():
     _t = 0.0
     local_ip = get_local_ip()
+    _lobby_sync_timer = 0.0
+    _client_player_list = []  # Client's copy of the player list
 
     while True:
         _t += 0.025
+        _lobby_sync_timer += 0.025
         sw, sh = settings_module.SCREEN_WIDTH, settings_module.SCREEN_HEIGHT
         surf = display_mgr.get_screen()
         mx, my = pygame.mouse.get_pos()
@@ -885,13 +888,38 @@ def show_lobby():
                     cl = _gs.small_font.render(f"• {un}", True, ACCENT)
                     surf.blit(cl, (px + 25, cy)); cy += 22
 
+            # Broadcast player list to clients every 0.5s
+            if _lobby_sync_timer >= 0.5 and gs.net_host:
+                _lobby_sync_timer = 0.0
+                unames = gs.net_host.get_usernames()
+                player_list = [{"name": gs.local_username, "is_host": True}]
+                for cid in gs.net_host.clients:
+                    player_list.append({"name": unames.get(cid, f"Player{cid}"), "is_host": False})
+                gs.net_host.broadcast("lobby_players", {"players": player_list, "count": len(player_list)})
+
         elif gs.net_mode == "client":
-            ct = _gs.menu_font.render("Connected!", True, ACCENT)
+            lobby_name = getattr(gs, '_lobby_name', 'Game')
+            ct = _gs.menu_font.render(f"Lobby: {lobby_name}", True, ACCENT)
             surf.blit(ct, (sw//2 - ct.get_width()//2, cy)); cy += 28
-            wt = _gs.small_font.render("Waiting for host to start...", True, TEXT_DIM)
-            surf.blit(wt, (sw//2 - wt.get_width()//2, cy)); cy += 24
-            ut = _gs.small_font.render(f"You: {gs.local_username}", True, (255, 200, 50))
-            surf.blit(ut, (sw//2 - ut.get_width()//2, cy))
+
+            pc = len(_client_player_list) if _client_player_list else 1
+            pt = _gs.menu_font.render(f"Players: {pc}", True, TEXT_BRIGHT)
+            surf.blit(pt, (sw//2 - pt.get_width()//2, cy)); cy += 30
+
+            if _client_player_list:
+                for p in _client_player_list:
+                    name = p.get("name", "???")
+                    is_host = p.get("is_host", False)
+                    color = GREEN if is_host else ACCENT
+                    suffix = " (Host)" if is_host else ""
+                    highlight = (255, 200, 50) if name == gs.local_username else color
+                    pl = _gs.small_font.render(f"• {name}{suffix}", True, highlight)
+                    surf.blit(pl, (px + 25, cy)); cy += 22
+            else:
+                wt = _gs.small_font.render("Waiting for player list...", True, TEXT_DIM)
+                surf.blit(wt, (sw//2 - wt.get_width()//2, cy)); cy += 24
+                ut = _gs.small_font.render(f"You: {gs.local_username}", True, (255, 200, 50))
+                surf.blit(ut, (sw//2 - ut.get_width()//2, cy))
 
         # Buttons
         bw2, bh2 = 240, 40
@@ -908,8 +936,12 @@ def show_lobby():
 
         if gs.net_mode == "client" and gs.net_client:
             for msg in gs.net_client.get_messages():
-                if msg.get("type") == MSG_GAME_START:
+                mtype = msg.get("type", "")
+                mdata = msg.get("data", {})
+                if mtype == MSG_GAME_START:
                     return "start"
+                elif mtype == "lobby_players":
+                    _client_player_list = mdata.get("players", [])
 
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT: pygame.quit(); sys.exit()

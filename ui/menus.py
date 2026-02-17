@@ -323,13 +323,19 @@ def show_class_selection():
 
         if gs.net_mode == "host" and gs.net_host and waiting_for_players:
             for msg in gs.net_host.get_messages():
-                if msg.get("type") == "class_ready": players_ready.add(msg.get("player_id",-1))
+                mtype = msg.get("type", "")
+                mdata = msg.get("data", {})
+                if mtype == "class_ready":
+                    pid = mdata.get("player_id", msg.get("_from", -1))
+                    if pid != -1:
+                        players_ready.add(pid)
             cc = len(gs.net_host.clients) if hasattr(gs.net_host,'clients') else 0
             if len(players_ready) >= cc:
                 gs.net_host.broadcast("all_classes_ready", {}); return (waiting_for_players, skip_options[skip_index])
         elif gs.net_mode == "client" and gs.net_client and waiting_for_players:
             for msg in gs.net_client.get_messages():
-                if msg.get("type") == "all_classes_ready": return (waiting_for_players, skip_options[skip_index])
+                mtype = msg.get("type", "")
+                if mtype == "all_classes_ready": return (waiting_for_players, skip_options[skip_index])
 
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT: pygame.quit(); sys.exit()
