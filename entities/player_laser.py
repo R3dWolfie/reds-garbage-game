@@ -27,7 +27,7 @@ class PlayerLaser(PlayerBase):
         "bullet_size": 1,       # Beam width multiplier
         "xp_gain": 1.0,
         "accuracy": 1.0,
-        "bullet_bounces": 2,    # Beam bounces off screen edges!
+        "bullet_bounces": 0,    # Gained via upgrades
     }
 
     def get_weapon_type(self):

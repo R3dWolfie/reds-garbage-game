@@ -1,6 +1,10 @@
 # updater/updater.py
 """
-Update logic — checks version API, downloads updates, applies them.
+Update logic — checks version API, downloads updates, stages them.
+Uses a two-stage approach for Windows compatibility:
+  1. Download zip → extract to _update_staging/
+  2. Write a helper script that copies staged files after game exits
+  3. Helper script launches the new version
 """
 
 import os
@@ -9,40 +13,38 @@ import json
 import shutil
 import tempfile
 import zipfile
+import platform
 import subprocess
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 
 from updater.version import VERSION, VERSION_URL
 
-# Timeout for network requests (seconds)
 REQUEST_TIMEOUT = 10
+STAGING_DIR_NAME = "_update_staging"
 
-# Where we are installed (the directory containing main.py / the .exe)
+
 def _get_install_dir():
     """Get the root install directory of the game."""
     if getattr(sys, 'frozen', False):
-        # Running as a PyInstaller .exe
         return os.path.dirname(sys.executable)
     else:
-        # Running as .py — go up from updater/ to the project root
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def _get_staging_dir():
+    """Get the staging directory path."""
+    return os.path.join(_get_install_dir(), STAGING_DIR_NAME)
+
+
 def _compare_versions(local, remote):
-    """
-    Compare two semver strings like '0.1.6' and '0.1.7'.
-    Returns True if remote is newer than local.
-    """
+    """Returns True if remote is newer than local."""
     try:
-        local_parts = [int(x) for x in local.strip().split('.')]
-        remote_parts = [int(x) for x in remote.strip().split('.')]
-        # Pad to same length
-        while len(local_parts) < len(remote_parts):
-            local_parts.append(0)
-        while len(remote_parts) < len(local_parts):
-            remote_parts.append(0)
-        return remote_parts > local_parts
+        lp = [int(x) for x in local.strip().split('.')]
+        rp = [int(x) for x in remote.strip().split('.')]
+        while len(lp) < len(rp): lp.append(0)
+        while len(rp) < len(lp): rp.append(0)
+        return rp > lp
     except (ValueError, AttributeError):
         return False
 
@@ -50,19 +52,9 @@ def _compare_versions(local, remote):
 def check_for_update():
     """
     Check the version API for a newer release.
-
-    Expected JSON response from VERSION_URL:
-    {
-        "version": "0.2.0",
-        "url": "https://updates.r3dwolfie.com/releases/v0.2.0.zip",
-        "changelog": "Added perma shop, bug fixes"
-    }
-
-    Returns the dict if an update is available, or None if up to date.
-    Raises on network errors (caller should catch).
+    Returns dict with version/url/changelog if update available, else None.
     """
     print(f"[Updater] Checking {VERSION_URL}  (current: v{VERSION})")
-
     try:
         req = Request(VERSION_URL, headers={"User-Agent": f"RGG-Updater/{VERSION}"})
         resp = urlopen(req, timeout=REQUEST_TIMEOUT)
@@ -74,7 +66,7 @@ def check_for_update():
         print(f"[Updater] Connection failed: {e.reason}")
         return None
     except Exception as e:
-        print(f"[Updater] Unexpected error checking for updates: {e}")
+        print(f"[Updater] Unexpected error: {e}")
         return None
 
     remote_version = data.get("version", "")
@@ -82,214 +74,292 @@ def check_for_update():
     changelog = data.get("changelog", "")
 
     if not remote_version or not download_url:
-        print(f"[Updater] Invalid response from server: {data}")
+        print(f"[Updater] Invalid response: {data}")
         return None
 
     if _compare_versions(VERSION, remote_version):
-        print(f"[Updater] Update available: v{VERSION} → v{remote_version}")
-        return {
-            "version": remote_version,
-            "url": download_url,
-            "changelog": changelog,
-        }
+        print(f"[Updater] Update available: v{VERSION} -> v{remote_version}")
+        return {"version": remote_version, "url": download_url, "changelog": changelog}
     else:
         print(f"[Updater] Up to date (remote: v{remote_version})")
         return None
 
 
+def check_pending_update():
+    """
+    Check if a staged update was applied by the helper script.
+    If _update_staging exists and is empty or has a 'done' marker, clean it up.
+    Returns True if an update was just applied.
+    """
+    staging = _get_staging_dir()
+    done_marker = os.path.join(_get_install_dir(), "_update_done.marker")
+
+    if os.path.exists(done_marker):
+        print("[Updater] Update was applied successfully on last restart!")
+        try:
+            os.remove(done_marker)
+        except Exception:
+            pass
+        # Clean up staging dir
+        if os.path.exists(staging):
+            try:
+                shutil.rmtree(staging)
+            except Exception:
+                pass
+        return True
+    return False
+
+
 def download_update(url, progress_callback=None):
-    """
-    Download an update zip from the given URL.
-
-    Args:
-        url: Direct download URL for the update zip.
-        progress_callback: Optional callable(downloaded_bytes, total_bytes)
-                           called periodically during download.
-
-    Returns the path to the downloaded temp file, or None on failure.
-    """
+    """Download an update zip. Returns path to temp file or None."""
     print(f"[Updater] Downloading: {url}")
-
     try:
         req = Request(url, headers={"User-Agent": f"RGG-Updater/{VERSION}"})
         resp = urlopen(req, timeout=60)
-
-        # Try to get content length for progress
         total = int(resp.headers.get("Content-Length", 0))
 
-        # Download to a temp file
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip", prefix="rgg_update_")
         downloaded = 0
-        chunk_size = 8192
-
         while True:
-            chunk = resp.read(chunk_size)
+            chunk = resp.read(8192)
             if not chunk:
                 break
             tmp.write(chunk)
             downloaded += len(chunk)
             if progress_callback:
                 progress_callback(downloaded, total)
-
         tmp.close()
-        print(f"[Updater] Downloaded {downloaded} bytes → {tmp.name}")
+        print(f"[Updater] Downloaded {downloaded} bytes -> {tmp.name}")
         return tmp.name
-
     except Exception as e:
         print(f"[Updater] Download failed: {e}")
         return None
 
 
-def apply_update(zip_path):
+def stage_update(zip_path):
     """
-    Extract the update zip over the current install directory.
-
-    The zip is expected to contain game files at its root (or inside a
-    single top-level folder). Files are extracted over the existing install.
-    The updater skips overwriting itself and the running executable to
-    avoid locked-file issues on Windows.
-
-    Returns True on success, False on failure.
+    Extract update zip to a staging directory.
+    Does NOT overwrite any game files yet.
+    Returns True on success.
     """
-    install_dir = _get_install_dir()
-    print(f"[Updater] Applying update from {zip_path} → {install_dir}")
+    staging = _get_staging_dir()
+    print(f"[Updater] Staging update to: {staging}")
+
+    # Clean old staging
+    if os.path.exists(staging):
+        shutil.rmtree(staging)
+    os.makedirs(staging, exist_ok=True)
 
     try:
         with zipfile.ZipFile(zip_path, 'r') as zf:
-            # Check if everything is inside a single top-level folder
             names = zf.namelist()
+            # Detect single top-level folder
             top_dirs = set()
             for n in names:
                 parts = n.split('/')
                 if len(parts) > 1:
                     top_dirs.add(parts[0])
 
-            # If there's exactly one top-level directory containing everything,
-            # strip it so files end up at the install root
             strip_prefix = ""
             if len(top_dirs) == 1:
                 prefix = list(top_dirs)[0] + "/"
-                all_inside = all(n.startswith(prefix) or n == prefix.rstrip('/') for n in names)
-                if all_inside:
+                if all(n.startswith(prefix) or n == prefix.rstrip('/') for n in names):
                     strip_prefix = prefix
-                    print(f"[Updater] Stripping top-level folder: {strip_prefix}")
-
-            # Files to skip (currently running exe, temp files)
-            running_exe = ""
-            if getattr(sys, 'frozen', False):
-                running_exe = os.path.basename(sys.executable).lower()
-
-            extracted = 0
-            skipped = 0
+                    print(f"[Updater] Stripping prefix: {strip_prefix}")
 
             for member in zf.infolist():
-                # Strip prefix if needed
                 rel_path = member.filename
                 if strip_prefix and rel_path.startswith(strip_prefix):
                     rel_path = rel_path[len(strip_prefix):]
-
                 if not rel_path or rel_path.endswith('/'):
-                    # Directory entry — ensure it exists
-                    dir_path = os.path.join(install_dir, rel_path)
-                    os.makedirs(dir_path, exist_ok=True)
+                    os.makedirs(os.path.join(staging, rel_path), exist_ok=True)
                     continue
-
-                # Skip the running executable (Windows locks it)
-                if running_exe and rel_path.lower() == running_exe:
-                    skipped += 1
-                    print(f"[Updater] Skipping locked file: {rel_path}")
-                    continue
-
-                # Extract file
-                dest = os.path.join(install_dir, rel_path)
+                dest = os.path.join(staging, rel_path)
                 os.makedirs(os.path.dirname(dest), exist_ok=True)
+                with zf.open(member) as src, open(dest, 'wb') as dst:
+                    shutil.copyfileobj(src, dst)
 
-                try:
-                    with zf.open(member) as src, open(dest, 'wb') as dst:
-                        shutil.copyfileobj(src, dst)
-                    extracted += 1
-                except PermissionError:
-                    # File is locked (e.g. DLL in use) — try renaming the old
-                    # one aside and writing the new one
-                    try:
-                        backup = dest + ".old"
-                        if os.path.exists(backup):
-                            os.remove(backup)
-                        os.rename(dest, backup)
-                        with zf.open(member) as src, open(dest, 'wb') as dst:
-                            shutil.copyfileobj(src, dst)
-                        extracted += 1
-                    except Exception as inner_e:
-                        print(f"[Updater] Could not overwrite {rel_path}: {inner_e}")
-                        skipped += 1
-
-            print(f"[Updater] Done — extracted {extracted} files, skipped {skipped}")
-
-        # Clean up the temp zip
+        print(f"[Updater] Staging complete")
+        # Clean up zip
         try:
             os.remove(zip_path)
         except Exception:
             pass
-
-        # Clean up any .old backup files from previous updates
-        _cleanup_old_files(install_dir)
-
         return True
 
-    except zipfile.BadZipFile:
-        print(f"[Updater] Bad zip file: {zip_path}")
-        return False
     except Exception as e:
-        print(f"[Updater] Apply failed: {e}")
+        print(f"[Updater] Staging failed: {e}")
         return False
 
 
-def _cleanup_old_files(directory):
-    """Remove leftover .old files from previous updates."""
-    try:
-        for root, dirs, files in os.walk(directory):
-            for f in files:
-                if f.endswith('.old'):
-                    try:
-                        os.remove(os.path.join(root, f))
-                    except Exception:
-                        pass
-    except Exception:
-        pass
-
-
-def restart_game():
+def apply_staged_update_and_restart():
     """
-    Restart the game process.
-
-    For a frozen .exe: re-launch the executable.
-    For .py: re-launch with the same Python interpreter.
+    Write a helper script that:
+      1. Waits for this process to exit
+      2. Copies staged files over the install directory
+      3. Writes a done marker
+      4. Relaunches the game
+      5. Deletes itself
+    Then exit this process.
     """
-    print("[Updater] Restarting game...")
+    install_dir = _get_install_dir()
+    staging = _get_staging_dir()
+
+    if not os.path.exists(staging):
+        print("[Updater] No staged update found!")
+        return False
+
+    if platform.system() == "Windows":
+        return _apply_windows(install_dir, staging)
+    else:
+        return _apply_unix(install_dir, staging)
+
+
+def _apply_windows(install_dir, staging):
+    """Write a .bat script that copies files after game exits."""
+    bat_path = os.path.join(install_dir, "_apply_update.bat")
+
+    # Figure out what to launch after update
+    if getattr(sys, 'frozen', False):
+        exe_name = os.path.basename(sys.executable)
+        launch_cmd = f'start "" "{exe_name}"'
+    else:
+        main_py = os.path.join(install_dir, "main.py")
+        python_exe = sys.executable.replace('"', '""')
+        launch_cmd = f'start "" "{python_exe}" "{main_py}"'
+
+    # Batch script: wait, xcopy, marker, relaunch, self-delete
+    bat_content = f'''@echo off
+echo Applying update...
+:: Wait for the game process to fully exit
+timeout /t 2 /nobreak >nul
+
+:: Copy all staged files over the install directory
+xcopy "{staging}\\*" "{install_dir}\\" /E /Y /Q >nul 2>&1
+if errorlevel 1 (
+    echo Update copy failed, retrying...
+    timeout /t 2 /nobreak >nul
+    xcopy "{staging}\\*" "{install_dir}\\" /E /Y /Q >nul 2>&1
+)
+
+:: Write success marker
+echo done > "{os.path.join(install_dir, '_update_done.marker')}"
+
+:: Clean up staging
+rmdir /S /Q "{staging}" >nul 2>&1
+
+:: Relaunch the game
+cd /d "{install_dir}"
+{launch_cmd}
+
+:: Delete this script
+del "%~f0" >nul 2>&1
+'''
 
     try:
-        if getattr(sys, 'frozen', False):
-            # PyInstaller .exe — launch the exe again
-            exe = sys.executable
-            subprocess.Popen([exe], cwd=os.path.dirname(exe))
-        else:
-            # Running as .py — find and re-run main.py
-            install_dir = _get_install_dir()
-            main_py = os.path.join(install_dir, "main.py")
-            if os.path.exists(main_py):
-                subprocess.Popen([sys.executable, main_py], cwd=install_dir)
-            else:
-                # Fallback: re-run whatever was originally launched
-                subprocess.Popen([sys.executable] + sys.argv)
+        with open(bat_path, 'w') as f:
+            f.write(bat_content)
+        print(f"[Updater] Wrote update script: {bat_path}")
+
+        # Launch the bat script hidden (minimized)
+        subprocess.Popen(
+            ['cmd', '/c', bat_path],
+            cwd=install_dir,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0x08000000,
+        )
+        print("[Updater] Update script launched, exiting game...")
+        _exit_game()
+        return True
+
     except Exception as e:
-        print(f"[Updater] Restart failed: {e}")
-        return  # Don't exit if restart failed
+        print(f"[Updater] Failed to write update script: {e}")
+        return False
 
-    # Exit current process — use os._exit to guarantee termination
-    # (sys.exit can be caught by try/except, os._exit cannot)
+
+def _apply_unix(install_dir, staging):
+    """Write a shell script for Linux/Mac."""
+    sh_path = os.path.join(install_dir, "_apply_update.sh")
+
+    if getattr(sys, 'frozen', False):
+        exe = os.path.join(install_dir, os.path.basename(sys.executable))
+        launch_cmd = f'"{exe}" &'
+    else:
+        main_py = os.path.join(install_dir, "main.py")
+        launch_cmd = f'"{sys.executable}" "{main_py}" &'
+
+    sh_content = f'''#!/bin/bash
+sleep 2
+cp -rf "{staging}/"* "{install_dir}/"
+echo "done" > "{os.path.join(install_dir, '_update_done.marker')}"
+rm -rf "{staging}"
+cd "{install_dir}"
+{launch_cmd}
+rm -f "$0"
+'''
+
+    try:
+        with open(sh_path, 'w') as f:
+            f.write(sh_content)
+        os.chmod(sh_path, 0o755)
+        print(f"[Updater] Wrote update script: {sh_path}")
+
+        subprocess.Popen(['/bin/bash', sh_path], cwd=install_dir)
+        print("[Updater] Update script launched, exiting game...")
+        _exit_game()
+        return True
+
+    except Exception as e:
+        print(f"[Updater] Failed to write update script: {e}")
+        return False
+
+
+def _exit_game():
+    """Cleanly exit the game process."""
     import pygame
     try:
         pygame.quit()
     except Exception:
         pass
     os._exit(0)
+
+
+# Legacy compat
+def apply_update(zip_path):
+    """Stage + apply in one call (for test_updater.py compat)."""
+    if stage_update(zip_path):
+        install_dir = _get_install_dir()
+        staging = _get_staging_dir()
+        # Direct copy (used in tests where we don't need process restart)
+        try:
+            for root, dirs, files in os.walk(staging):
+                for f in files:
+                    src = os.path.join(root, f)
+                    rel = os.path.relpath(src, staging)
+                    dst = os.path.join(install_dir, rel)
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    shutil.copy2(src, dst)
+            shutil.rmtree(staging)
+            return True
+        except Exception as e:
+            print(f"[Updater] Direct apply failed: {e}")
+            return False
+    return False
+
+
+def restart_game():
+    """Legacy — just restart without update."""
+    print("[Updater] Restarting game...")
+    try:
+        if getattr(sys, 'frozen', False):
+            subprocess.Popen([sys.executable], cwd=os.path.dirname(sys.executable))
+        else:
+            install_dir = _get_install_dir()
+            main_py = os.path.join(install_dir, "main.py")
+            if os.path.exists(main_py):
+                subprocess.Popen([sys.executable, main_py], cwd=install_dir)
+            else:
+                subprocess.Popen([sys.executable] + sys.argv)
+    except Exception as e:
+        print(f"[Updater] Restart failed: {e}")
+        return
+    _exit_game()

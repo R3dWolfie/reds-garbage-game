@@ -195,7 +195,7 @@ CLASS_UPGRADES = {
     ],
     "laser": [
         {"key": "beam_width",      "name": "Beam Width +40%",     "desc": "Wider beam hits more enemies"},
-        {"key": "beam_bounce",     "name": "Beam Bounce +1",      "desc": "Beam bounces off screen edges"},
+        {"key": "beam_bounce",     "name": "Beam Chain +1",       "desc": "Beam chains to another enemy"},
     ],
     "gunner": [
         {"key": "bullet_storm",    "name": "Bullet Storm",        "desc": "+2 multishot, +20% fire rate"},
@@ -219,7 +219,7 @@ BIG_CLASS_UPGRADES = {
         {"key": "big_ram",         "name": "★ Juggernaut Rush",   "desc": "Ram damage x2, +100 HP"},
     ],
     "laser": [
-        {"key": "big_beam",        "name": "★ Mega Beam",         "desc": "Beam width x2, +2 bounces, +3 dmg"},
+        {"key": "big_beam",        "name": "★ Mega Beam",         "desc": "Beam width x2, +2 chains, +3 dmg"},
     ],
     "gunner": [
         {"key": "big_storm",       "name": "★ Lead Rain",         "desc": "+4 multishot, +40% fire rate"},

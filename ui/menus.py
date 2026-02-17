@@ -477,11 +477,14 @@ def show_shop_menu():
 
         back_r, _ = _back_btn(surf, mx, my, small_font)
 
-        _draw_text(surf, "SHOP & COSMETICS", header_font, TEXT_BRIGHT, sw//2, sh//3 - 30)
+        # Title — centered
+        title_y = sh//2 - 80
+        _draw_text(surf, "SHOP & COSMETICS", menu_font, TEXT_BRIGHT, sw//2, title_y)
 
+        # Buttons — centered under title
         bw, bh = 300, 50
         bx = sw//2 - bw//2
-        sy = sh//2 - 30
+        sy = title_y + 35
 
         r1 = pygame.Rect(bx, sy, bw, bh)
         r2 = pygame.Rect(bx, sy + 64, bw, bh)
@@ -515,11 +518,12 @@ def show_play_mode():
 
         back_r, _ = _back_btn(surf, mx, my, small_font)
 
-        _draw_text(surf, "PLAY", header_font, TEXT_BRIGHT, sw//2, sh//3 - 30)
+        title_y = sh//2 - 80
+        _draw_text(surf, "PLAY", menu_font, TEXT_BRIGHT, sw//2, title_y)
 
         bw, bh = 300, 50
         bx = sw//2 - bw//2
-        sy = sh//2 - 30
+        sy = title_y + 35
 
         r1 = pygame.Rect(bx, sy, bw, bh)
         r2 = pygame.Rect(bx, sy + 64, bw, bh)

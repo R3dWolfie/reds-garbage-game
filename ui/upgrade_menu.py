@@ -115,8 +115,8 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
     # Remove useless upgrades for specific classes
     weapon = player_obj.get_weapon_type()
     if weapon == "beam":
-        # Piercing is meaningless for beam (always pierces everything)
-        pool = [u for u in pool if "piercing" not in u["key"]]
+        # Piercing and multishot are meaningless for beam
+        pool = [u for u in pool if "piercing" not in u["key"] and "multishot" not in u["key"]]
 
     weights = []
     for item in pool:

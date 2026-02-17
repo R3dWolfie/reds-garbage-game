@@ -313,7 +313,7 @@ def show_hat_menu():
 
             owned = hat["id"] in collected
             is_eq = hat["id"] == equipped
-            hov = cr.collidepoint(mx, my) and cy >= 55
+            hov = cr.collidepoint(mx, my) and cy + card_h > 0 and cy < sh
             rc = RARITY_COLORS.get(hat["rarity"], (180, 180, 190))
 
             # Card background
@@ -398,7 +398,7 @@ def show_hat_menu():
                 if back_r.collidepoint(ev.pos):
                     return
                 for cr, hat in rects:
-                    if cr.collidepoint(ev.pos) and hat["id"] in collected and cr.y >= 55:
+                    if cr.collidepoint(ev.pos) and hat["id"] in collected:
                         if equipped == hat["id"]:
                             equipped = None
                             settings_module.config["equipped_hat"] = None

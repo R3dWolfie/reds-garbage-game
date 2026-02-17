@@ -826,35 +826,70 @@ def run_game(class_key, starting_wave=1):
 
                         bsize = player_obj.stats.get("bullet_size", 1.0)
                         if weapon == "beam":
-                            # Arcanist beam — bounces off screen edges!
+                            # Arcanist beam — chains to enemies!
                             beam_w = int(12 * bsize * (1 + (multishot_count - 1) * 0.4))
                             bounces = player_obj.stats.get("bullet_bounces", 0)
 
-                            # Calculate beam segments with bouncing
+                            # Build beam segments: first goes to screen edge, bounces chain to enemies
                             segments = []
+                            hit_enemies_chain = set()
                             bx, by = float(player_obj.rect.centerx), float(player_obj.rect.centery)
                             bdx = math.cos(bullet_angle)
                             bdy = math.sin(bullet_angle)
-                            for _seg in range(bounces + 1):
-                                # March forward to find wall hit
-                                steps = int(max(sw, sh) * 2)
-                                ex, ey = bx + bdx * steps, by + bdy * steps
-                                # Clip to screen edges
-                                t_min = steps
-                                if bdx > 0: t_min = min(t_min, (sw - bx) / bdx) if bdx != 0 else t_min
-                                elif bdx < 0: t_min = min(t_min, -bx / bdx) if bdx != 0 else t_min
-                                if bdy > 0: t_min = min(t_min, (sh - by) / bdy) if bdy != 0 else t_min
-                                elif bdy < 0: t_min = min(t_min, -by / bdy) if bdy != 0 else t_min
-                                t_min = max(1, t_min)
-                                hit_x = bx + bdx * t_min
-                                hit_y = by + bdy * t_min
-                                segments.append(((int(bx), int(by)), (int(hit_x), int(hit_y))))
-                                # Bounce: reflect off the wall we hit
-                                if abs(hit_x) < 2 or abs(hit_x - sw) < 2:
-                                    bdx = -bdx
-                                if abs(hit_y) < 2 or abs(hit_y - sh) < 2:
-                                    bdy = -bdy
-                                bx, by = hit_x, hit_y
+
+                            # First segment: straight line to screen edge (the initial shot)
+                            beam_len = max(sw, sh) * 2
+                            end_x = bx + bdx * beam_len
+                            end_y = by + bdy * beam_len
+                            segments.append(((int(bx), int(by)), (int(end_x), int(end_y))))
+
+                            # Find enemies hit by first segment, pick closest as chain origin
+                            first_hit = None
+                            first_hit_dist = float('inf')
+                            for enemy in enemies_grp:
+                                if isinstance(enemy, PhaseWraith) and enemy.phased_out:
+                                    continue
+                                eex, eey = enemy.rect.centerx, enemy.rect.centery
+                                px_r = eex - bx
+                                py_r = eey - by
+                                proj = px_r * bdx + py_r * bdy
+                                if proj > 0:
+                                    perp = abs(px_r * bdy - py_r * bdx)
+                                    if perp < beam_w + enemy.rect.width // 2:
+                                        if proj < first_hit_dist:
+                                            first_hit_dist = proj
+                                            first_hit = enemy
+
+                            # Chain bounces: from each hit enemy, find nearest unhit enemy
+                            if first_hit and bounces > 0:
+                                hit_enemies_chain.add(id(first_hit))
+                                chain_x = float(first_hit.rect.centerx)
+                                chain_y = float(first_hit.rect.centery)
+
+                                for _b in range(bounces):
+                                    # Find nearest unhit enemy
+                                    best = None
+                                    best_dist = float('inf')
+                                    for enemy in enemies_grp:
+                                        if id(enemy) in hit_enemies_chain:
+                                            continue
+                                        if isinstance(enemy, PhaseWraith) and enemy.phased_out:
+                                            continue
+                                        dx = enemy.rect.centerx - chain_x
+                                        dy = enemy.rect.centery - chain_y
+                                        d = dx * dx + dy * dy
+                                        if d < best_dist:
+                                            best_dist = d
+                                            best = enemy
+
+                                    if best is None:
+                                        break
+
+                                    # Add chain segment
+                                    tx, ty = best.rect.centerx, best.rect.centery
+                                    segments.append(((int(chain_x), int(chain_y)), (int(tx), int(ty))))
+                                    hit_enemies_chain.add(id(best))
+                                    chain_x, chain_y = float(tx), float(ty)
 
                             active_beam = {
                                 "segments": segments,

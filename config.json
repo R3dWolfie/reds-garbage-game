@@ -12,7 +12,7 @@
   "music_volume": 0.5,
   "username": "Red",
   "mouse_move": true,
-  "gold": 23,
+  "gold": 33,
   "highest_wave": 1,
   "equipped_hat": null,
   "collected_hats": [
@@ -35,7 +35,8 @@
     "hardhat",
     "wizard",
     "backwards_cap",
-    "devilhorns"
+    "devilhorns",
+    "straw"
   ],
   "perma_upgrades": {
     "roomba_count": 0,
