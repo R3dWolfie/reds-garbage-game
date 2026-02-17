@@ -11,10 +11,11 @@ import core.game_state as _gs
 class RemoteEnemyGhost(pygame.sprite.Sprite):
     """Client-side mirror of a host's enemy. No AI, just visual tracking."""
 
-    def __init__(self, enemy_id, x, y, is_boss=False, wave=1):
+    def __init__(self, enemy_id, x, y, is_boss=False, wave=1, etype=None, speed=None):
         super().__init__()
         self.enemy_id = enemy_id
         self.is_boss = is_boss
+        self.etype = etype
         self.target_x = x
         self.target_y = y
         self.max_health = 1

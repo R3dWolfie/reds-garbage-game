@@ -6,6 +6,7 @@ Supports both direct P2P and relay mode.
 """
 
 import socket
+import struct
 import threading
 import time
 import json
@@ -76,60 +77,102 @@ class GameHost:
         return room_code
 
     def _relay_receive_loop(self):
-        """Receive data from the relay socket (all clients multiplexed).
+        """Receive data from the relay socket with per-client framing.
 
-        In relay mode, ALL client data arrives on one socket. The relay server
-        forwards each client's TCP stream to us merged together. Since our game
-        protocol is length-prefixed, messages are self-delimiting and we can
-        decode them from the combined stream.
+        The relay server wraps each client's messages as:
+          [4B total_len][2B client_id][payload]
+        where payload is the original game protocol message (also length-prefixed).
 
-        We treat all relay clients as a single virtual client (relay_id=1).
-        The game protocol already handles multi-client state via player_id
-        fields in messages.
+        A frame with just [2B client_id] and no payload = client disconnected.
         """
-        # Wait briefly for a client to actually connect before creating the virtual client
-        # The relay forwards client data as soon as they join
-        buf = b""
         self._relay_sock.settimeout(1.0)
-        relay_id = None
+        self._relay_clients = {}  # {relay_client_id: our_player_id}
 
         while self.running:
             try:
-                data = self._relay_sock.recv(BUFFER_SIZE)
-                if not data:
-                    break
-                buf += data
-                messages, buf = decode_messages(buf)
+                # Read frame length
+                raw_len = b""
+                while len(raw_len) < 4:
+                    try:
+                        chunk = self._relay_sock.recv(4 - len(raw_len))
+                    except socket.timeout:
+                        if not self.running:
+                            return
+                        continue
+                    if not chunk:
+                        print("[Host] Relay connection closed")
+                        return
+                    raw_len += chunk
 
+                frame_len = struct.unpack("!I", raw_len)[0]
+                if frame_len > 1048576:
+                    print("[Host] Relay frame too large, dropping")
+                    continue
+
+                # Read full frame
+                frame = b""
+                while len(frame) < frame_len:
+                    try:
+                        chunk = self._relay_sock.recv(frame_len - len(frame))
+                    except socket.timeout:
+                        if not self.running:
+                            return
+                        continue
+                    if not chunk:
+                        return
+                    frame += chunk
+
+                if len(frame) < 2:
+                    continue
+
+                # Extract client ID
+                relay_cid = struct.unpack("!H", frame[:2])[0]
+                payload = frame[2:]
+
+                # Empty payload = client disconnected
+                if not payload:
+                    if relay_cid in self._relay_clients:
+                        pid = self._relay_clients[relay_cid]
+                        print(f"[Host] Relay client {relay_cid} (Player {pid}) disconnected")
+                        self._disconnect_player(pid)
+                        del self._relay_clients[relay_cid]
+                    continue
+
+                # Map relay client ID to our player ID
+                if relay_cid not in self._relay_clients:
+                    # New client — assign player ID
+                    player_id = self.next_id
+                    self.next_id += 1
+                    self._relay_clients[relay_cid] = player_id
+
+                    with self.lock:
+                        self.clients[player_id] = {
+                            "socket": self._relay_sock,
+                            "buffer": b"",
+                            "name": f"Player {player_id}",
+                            "username": f"Player{player_id}",
+                            "state": {},
+                            "addr": ("relay", relay_cid),
+                            "_is_relay": True,
+                            "_relay_cid": relay_cid,
+                        }
+
+                    # Send handshake to this specific client
+                    handshake = encode_message(MSG_HANDSHAKE, {
+                        "your_id": player_id,
+                        "host_id": self.host_player_id,
+                        "players": self._get_player_list(),
+                    })
+                    self._relay_send_to_client(relay_cid, handshake)
+                    print(f"[Host] Relay client {relay_cid} connected as Player {player_id}")
+
+                pid = self._relay_clients[relay_cid]
+
+                # Decode game messages from payload
+                messages, _ = decode_messages(payload)
                 for msg in messages:
-                    # First message from a client through relay — create virtual client
-                    if relay_id is None:
-                        relay_id = self.next_id
-                        self.next_id += 1
-                        with self.lock:
-                            self.clients[relay_id] = {
-                                "socket": self._relay_sock,
-                                "buffer": b"",
-                                "name": f"Player {relay_id}",
-                                "username": f"Player{relay_id}",
-                                "state": {},
-                                "addr": ("relay", 0),
-                                "_is_relay": True,
-                            }
-                        # Send handshake back through relay
-                        handshake = encode_message(MSG_HANDSHAKE, {
-                            "your_id": relay_id,
-                            "host_id": self.host_player_id,
-                            "players": self._get_player_list(),
-                        })
-                        try:
-                            self._relay_sock.sendall(handshake)
-                        except:
-                            pass
-                        print(f"[Host] Relay client {relay_id} connected")
-
-                    msg["_from"] = relay_id
-                    self._handle_message(msg, relay_id)
+                    msg["_from"] = pid
+                    self._handle_message(msg, pid)
 
             except socket.timeout:
                 continue
@@ -139,8 +182,35 @@ class GameHost:
                 break
 
         print("[Host] Relay connection lost")
-        if relay_id is not None:
-            self._disconnect_player(relay_id)
+        # Disconnect all relay clients
+        for relay_cid, pid in list(self._relay_clients.items()):
+            self._disconnect_player(pid)
+
+    def _relay_send_to_client(self, relay_cid, raw_game_data):
+        """Send data to a specific relay client by wrapping with its ID."""
+        try:
+            # Frame: [4B len][2B target_client_id][payload]
+            wrapped = struct.pack("!H", relay_cid) + raw_game_data
+            frame = struct.pack("!I", len(wrapped)) + wrapped
+            self._relay_sock.sendall(frame)
+        except Exception as e:
+            print(f"[Host] Relay send error: {e}")
+
+    def _relay_broadcast(self, raw_game_data, exclude_relay_cid=None):
+        """Broadcast data to all relay clients."""
+        try:
+            if exclude_relay_cid is not None:
+                # Send individually to each client except excluded
+                for rcid in list(self._relay_clients.keys()):
+                    if rcid != exclude_relay_cid:
+                        self._relay_send_to_client(rcid, raw_game_data)
+            else:
+                # Use broadcast magic ID
+                wrapped = struct.pack("!H", 0xFFFF) + raw_game_data
+                frame = struct.pack("!I", len(wrapped)) + wrapped
+                self._relay_sock.sendall(frame)
+        except Exception as e:
+            print(f"[Host] Relay broadcast error: {e}")
 
     def _beacon_loop(self):
         """Broadcast server info via UDP for LAN discovery."""
@@ -236,15 +306,19 @@ class GameHost:
             try:
                 with self.lock:
                     if player_id not in self.clients:
+                        print(f"[Host] Player {player_id} no longer in clients dict")
                         break
                     sock = self.clients[player_id]["socket"]
 
                 data = sock.recv(BUFFER_SIZE)
                 if not data:
+                    print(f"[Host] Player {player_id}: recv returned empty (connection closed by client)")
                     self._disconnect_player(player_id)
                     break
 
                 with self.lock:
+                    if player_id not in self.clients:
+                        break
                     self.clients[player_id]["buffer"] += data
                     messages, remaining = decode_messages(self.clients[player_id]["buffer"])
                     self.clients[player_id]["buffer"] = remaining
@@ -256,6 +330,7 @@ class GameHost:
             except socket.timeout:
                 continue
             except Exception as e:
+                print(f"[Host] Player {player_id} receive error: {type(e).__name__}: {e}")
                 self._disconnect_player(player_id)
                 break
 
@@ -306,10 +381,13 @@ class GameHost:
         """Handle a player disconnecting."""
         with self.lock:
             if player_id in self.clients:
-                try:
-                    self.clients[player_id]["socket"].close()
-                except Exception:
-                    pass
+                client = self.clients[player_id]
+                # Don't close relay socket — it's shared by all relay clients
+                if not client.get("_is_relay"):
+                    try:
+                        client["socket"].close()
+                    except Exception:
+                        pass
                 del self.clients[player_id]
                 print(f"[Host] Player {player_id} disconnected.")
 
@@ -326,38 +404,64 @@ class GameHost:
             return [self.host_player_id] + list(self.clients.keys())
 
     def broadcast(self, msg_type, data=None, exclude=None):
-        """Send a message to all connected clients (non-blocking)."""
+        """Send a message to all connected clients."""
         raw = encode_message(msg_type, data)
+
+        # Collect targets under lock
+        exclude_relay_cid = None
+        relay_targets = []
+        direct_targets = []
+
         with self.lock:
+            if exclude and exclude in self.clients:
+                exclude_relay_cid = self.clients[exclude].get("_relay_cid")
             for pid, client in list(self.clients.items()):
                 if pid == exclude:
                     continue
-                try:
-                    client["socket"].setblocking(False)
-                    client["socket"].send(raw)
-                except BlockingIOError:
-                    # Queue for later — append to client buffer
-                    if "_send_buf" not in client:
-                        client["_send_buf"] = bytearray()
-                    client["_send_buf"].extend(raw)
-                except Exception:
-                    pass
-                finally:
-                    try:
-                        client["socket"].setblocking(True)
-                        client["socket"].settimeout(0.5)
-                    except Exception:
-                        pass
+                if client.get("_is_relay"):
+                    relay_targets.append(client.get("_relay_cid"))
+                else:
+                    direct_targets.append((pid, client["socket"]))
+
+        # Send to direct clients
+        dead = []
+        for pid, sock in direct_targets:
+            try:
+                sock.sendall(raw)
+            except socket.timeout:
+                # Send buffer full, skip this message but don't kill the client
+                pass
+            except (BrokenPipeError, ConnectionResetError, OSError) as e:
+                print(f"[Host] Player {pid} send failed: {type(e).__name__}: {e}")
+                dead.append(pid)
+
+        for pid in dead:
+            self._disconnect_player(pid)
+
+        # Send to relay clients via framing
+        if relay_targets and hasattr(self, '_relay_send_to_client'):
+            if exclude_relay_cid is None:
+                self._relay_broadcast(raw)
+            else:
+                for rcid in relay_targets:
+                    if rcid != exclude_relay_cid:
+                        self._relay_send_to_client(rcid, raw)
 
     def send_to(self, player_id, msg_type, data=None):
         """Send a message to a specific client."""
         raw = encode_message(msg_type, data)
         with self.lock:
             if player_id in self.clients:
-                try:
-                    self.clients[player_id]["socket"].sendall(raw)
-                except Exception:
-                    pass
+                client = self.clients[player_id]
+                if client.get("_is_relay") and hasattr(self, '_relay_send_to_client'):
+                    rcid = client.get("_relay_cid")
+                    if rcid is not None:
+                        self._relay_send_to_client(rcid, raw)
+                else:
+                    try:
+                        client["socket"].sendall(raw)
+                    except Exception:
+                        pass
 
     def get_messages(self):
         """Get and clear queued messages for the host game loop."""

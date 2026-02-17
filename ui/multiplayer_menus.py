@@ -523,9 +523,8 @@ def _try_relay_join(room_code, password=""):
         print(f"[Relay] Join failed: {err}")
         return None
     gs.net_client = GameClient()
-    if gs.net_client.connect_relay(relay_sock):
+    if gs.net_client.connect_relay(relay_sock, username=gs.local_username):
         gs.net_mode = "client"
-        gs.net_client.send_username(gs.local_username)
         # Save to recent with room code as key
         _save_recent_server(room_code, 0, f"Relay: {room_code}")
         return "client", gs.net_client

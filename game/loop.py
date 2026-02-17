@@ -2439,14 +2439,16 @@ def run_game(class_key, starting_wave=1):
             notif["timer"] -= dt
             alpha = min(255, notif["timer"] * 3)
             rc = RARITY_COLORS.get(notif["rarity"], (180,180,190))
+            a_fill = max(0, min(255, int(alpha * 0.15)))
+            a_border = max(0, min(255, int(alpha * 0.5)))
             # Background
             nbs = pygame.Surface((300, 32), pygame.SRCALPHA)
-            nbs.fill((*rc[:3], int(alpha * 0.15)))
-            pygame.draw.rect(nbs, (*rc[:3], int(alpha * 0.5)), (0,0,300,32), 2, border_radius=6)
+            nbs.fill((rc[0], rc[1], rc[2], a_fill))
+            pygame.draw.rect(nbs, (rc[0], rc[1], rc[2], a_border), (0,0,300,32), 2, border_radius=6)
             surf.blit(nbs, (sw//2 - 150, ny))
             # Text
-            ht = _gs.small_font.render(f"NEW HAT: {notif['name']}", True, (*rc[:3],))
-            rt = _gs.small_font.render(f"[{notif['rarity'].upper()}]", True, (*rc[:3],))
+            ht = _gs.small_font.render(f"NEW HAT: {notif['name']}", True, (rc[0], rc[1], rc[2]))
+            rt = _gs.small_font.render(f"[{notif['rarity'].upper()}]", True, (rc[0], rc[1], rc[2]))
             surf.blit(ht, (sw//2 - ht.get_width()//2, ny + 2))
             surf.blit(rt, (sw//2 - rt.get_width()//2, ny + 16))
             ny -= 38

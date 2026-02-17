@@ -54,7 +54,7 @@ class GameClient:
             self.connected = False
             return False
 
-    def connect_relay(self, relay_sock):
+    def connect_relay(self, relay_sock, username=None):
         """Connect using an already-established relay socket.
         The relay handshake is already done — socket is ready for game protocol."""
         try:
@@ -66,6 +66,14 @@ class GameClient:
             # Start receive thread
             self.recv_thread = threading.Thread(target=self._receive_loop, daemon=True)
             self.recv_thread.start()
+
+            # Send a message to the host through relay so it knows we're here
+            # The host creates our virtual client slot when it receives this
+            if username:
+                self.send_username(username)
+            else:
+                # Send a ping/hello so the host sees us
+                self.send_username("Player")
 
             # Wait for handshake from host (through relay)
             start = time.time()
@@ -102,6 +110,7 @@ class GameClient:
             try:
                 data = self.socket.recv(BUFFER_SIZE)
                 if not data:
+                    print("[Client] recv returned empty (host closed connection)")
                     self.connected = False
                     break
 
@@ -115,7 +124,7 @@ class GameClient:
                 continue
             except Exception as e:
                 if self.running:
-                    print(f"[Client] Receive error: {e}")
+                    print(f"[Client] Receive error: {type(e).__name__}: {e}")
                     self.connected = False
                 break
 

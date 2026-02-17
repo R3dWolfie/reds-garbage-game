@@ -1,20 +1,25 @@
 # updater/updater.py
 """
 Update logic — checks version API, downloads updates, stages them.
-Uses a two-stage approach for Windows compatibility:
-  1. Download zip → extract to _update_staging/
-  2. Write a helper script that copies staged files after game exits
-  3. Helper script launches the new version
+Supports both Windows (.zip) and Linux (.tar.gz) builds.
+
+Server version.json format (supports both old and new):
+  Old: {"version": "x.y.z", "url": "https://...", "changelog": "..."}
+  New: {"version": "x.y.z", "url_windows": "https://...", "url_linux": "https://...", "changelog": "..."}
+
+The updater sends ?platform=linux|windows so the server can also route dynamically.
 """
 
 import os
 import sys
 import json
 import shutil
+import tarfile
 import tempfile
 import zipfile
 import platform
 import subprocess
+import stat
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 
@@ -22,6 +27,16 @@ from updater.version import VERSION, VERSION_URL
 
 REQUEST_TIMEOUT = 10
 STAGING_DIR_NAME = "_update_staging"
+
+
+def _get_platform():
+    """Return 'windows', 'macos', or 'linux'."""
+    s = platform.system().lower()
+    if s == "windows":
+        return "windows"
+    if s == "darwin":
+        return "macos"
+    return "linux"
 
 
 def _get_install_dir():
@@ -52,11 +67,19 @@ def _compare_versions(local, remote):
 def check_for_update():
     """
     Check the version API for a newer release.
+    Sends platform info so the server can return the correct download URL.
     Returns dict with version/url/changelog if update available, else None.
     """
-    print(f"[Updater] Checking {VERSION_URL}  (current: v{VERSION})")
+    plat = _get_platform()
+    # Append platform query param so server can route if it supports it
+    sep = "&" if "?" in VERSION_URL else "?"
+    url = f"{VERSION_URL}{sep}platform={plat}"
+
+    print(f"[Updater] Checking {VERSION_URL}  (current: v{VERSION}, platform: {plat})")
     try:
-        req = Request(VERSION_URL, headers={"User-Agent": f"RGG-Updater/{VERSION}"})
+        req = Request(url, headers={
+            "User-Agent": f"RGG-Updater/{VERSION} ({plat})",
+        })
         resp = urlopen(req, timeout=REQUEST_TIMEOUT)
         data = json.loads(resp.read().decode("utf-8"))
     except HTTPError as e:
@@ -70,15 +93,27 @@ def check_for_update():
         return None
 
     remote_version = data.get("version", "")
-    download_url = data.get("url", "")
     changelog = data.get("changelog", "")
 
-    if not remote_version or not download_url:
+    # Pick download URL: prefer platform-specific, fall back to generic
+    download_url = ""
+    if plat == "windows":
+        download_url = data.get("url_windows", "") or data.get("url", "")
+    elif plat == "macos":
+        download_url = data.get("url_macos", "") or data.get("url", "")
+    else:
+        download_url = data.get("url_linux", "") or data.get("url", "")
+
+    if not remote_version:
         print(f"[Updater] Invalid response: {data}")
         return None
 
+    if not download_url:
+        print(f"[Updater] No download URL for platform '{plat}' in response")
+        return None
+
     if _compare_versions(VERSION, remote_version):
-        print(f"[Updater] Update available: v{VERSION} -> v{remote_version}")
+        print(f"[Updater] Update available: v{VERSION} -> v{remote_version} ({plat})")
         return {"version": remote_version, "url": download_url, "changelog": changelog}
     else:
         print(f"[Updater] Up to date (remote: v{remote_version})")
@@ -88,7 +123,6 @@ def check_for_update():
 def check_pending_update():
     """
     Check if a staged update was applied by the helper script.
-    If _update_staging exists and is empty or has a 'done' marker, clean it up.
     Returns True if an update was just applied.
     """
     staging = _get_staging_dir()
@@ -100,7 +134,6 @@ def check_pending_update():
             os.remove(done_marker)
         except Exception:
             pass
-        # Clean up staging dir
         if os.path.exists(staging):
             try:
                 shutil.rmtree(staging)
@@ -111,14 +144,18 @@ def check_pending_update():
 
 
 def download_update(url, progress_callback=None):
-    """Download an update zip. Returns path to temp file or None."""
+    """Download an update archive (.zip or .tar.gz). Returns path to temp file or None."""
     print(f"[Updater] Downloading: {url}")
     try:
         req = Request(url, headers={"User-Agent": f"RGG-Updater/{VERSION}"})
         resp = urlopen(req, timeout=60)
         total = int(resp.headers.get("Content-Length", 0))
 
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip", prefix="rgg_update_")
+        # Detect file type from URL or Content-Type
+        is_targz = url.endswith(".tar.gz") or url.endswith(".tgz")
+        suffix = ".tar.gz" if is_targz else ".zip"
+
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix="rgg_update_")
         downloaded = 0
         while True:
             chunk = resp.read(8192)
@@ -136,53 +173,37 @@ def download_update(url, progress_callback=None):
         return None
 
 
-def stage_update(zip_path):
+def stage_update(archive_path):
     """
-    Extract update zip to a staging directory.
-    Does NOT overwrite any game files yet.
+    Extract update archive (.zip or .tar.gz) to a staging directory.
+    Handles single top-level folder stripping for both formats.
+    Preserves file permissions on Linux.
     Returns True on success.
     """
     staging = _get_staging_dir()
     print(f"[Updater] Staging update to: {staging}")
 
-    # Clean old staging
     if os.path.exists(staging):
         shutil.rmtree(staging)
     os.makedirs(staging, exist_ok=True)
 
     try:
-        with zipfile.ZipFile(zip_path, 'r') as zf:
-            names = zf.namelist()
-            # Detect single top-level folder
-            top_dirs = set()
-            for n in names:
-                parts = n.split('/')
-                if len(parts) > 1:
-                    top_dirs.add(parts[0])
+        is_targz = archive_path.endswith(".tar.gz") or archive_path.endswith(".tgz")
 
-            strip_prefix = ""
-            if len(top_dirs) == 1:
-                prefix = list(top_dirs)[0] + "/"
-                if all(n.startswith(prefix) or n == prefix.rstrip('/') for n in names):
-                    strip_prefix = prefix
-                    print(f"[Updater] Stripping prefix: {strip_prefix}")
-
-            for member in zf.infolist():
-                rel_path = member.filename
-                if strip_prefix and rel_path.startswith(strip_prefix):
-                    rel_path = rel_path[len(strip_prefix):]
-                if not rel_path or rel_path.endswith('/'):
-                    os.makedirs(os.path.join(staging, rel_path), exist_ok=True)
-                    continue
-                dest = os.path.join(staging, rel_path)
-                os.makedirs(os.path.dirname(dest), exist_ok=True)
-                with zf.open(member) as src, open(dest, 'wb') as dst:
-                    shutil.copyfileobj(src, dst)
+        if is_targz:
+            _extract_targz(archive_path, staging)
+        else:
+            _extract_zip(archive_path, staging)
 
         print(f"[Updater] Staging complete")
-        # Clean up zip
+
+        # On Linux, make sure any binaries in staging are executable
+        if _get_platform() != "windows":
+            _fix_permissions(staging)
+
+        # Clean up archive
         try:
-            os.remove(zip_path)
+            os.remove(archive_path)
         except Exception:
             pass
         return True
@@ -190,6 +211,113 @@ def stage_update(zip_path):
     except Exception as e:
         print(f"[Updater] Staging failed: {e}")
         return False
+
+
+def _extract_zip(zip_path, staging):
+    """Extract a .zip archive with top-level folder stripping."""
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        names = zf.namelist()
+        strip_prefix = _detect_strip_prefix(names)
+
+        for member in zf.infolist():
+            rel_path = member.filename
+            if strip_prefix and rel_path.startswith(strip_prefix):
+                rel_path = rel_path[len(strip_prefix):]
+            if not rel_path or rel_path.endswith('/'):
+                os.makedirs(os.path.join(staging, rel_path), exist_ok=True)
+                continue
+            dest = os.path.join(staging, rel_path)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with zf.open(member) as src, open(dest, 'wb') as dst:
+                shutil.copyfileobj(src, dst)
+
+
+def _extract_targz(tar_path, staging):
+    """Extract a .tar.gz archive with top-level folder stripping."""
+    with tarfile.open(tar_path, 'r:gz') as tf:
+        names = tf.getnames()
+        strip_prefix = _detect_strip_prefix(names)
+
+        # First pass: collect all final paths to know what's a file vs dir
+        file_paths = set()
+        dir_paths = set()
+        for member in tf.getmembers():
+            rel_path = member.name
+            if strip_prefix and rel_path.startswith(strip_prefix):
+                rel_path = rel_path[len(strip_prefix):]
+            if not rel_path:
+                continue
+            if member.isdir():
+                dir_paths.add(rel_path)
+            else:
+                file_paths.add(rel_path)
+
+        # Second pass: extract
+        for member in tf.getmembers():
+            rel_path = member.name
+            if strip_prefix and rel_path.startswith(strip_prefix):
+                rel_path = rel_path[len(strip_prefix):]
+            if not rel_path:
+                continue
+
+            dest = os.path.join(staging, rel_path)
+
+            if member.isdir():
+                # Only create directory if no file has the same name
+                if rel_path not in file_paths:
+                    os.makedirs(dest, exist_ok=True)
+            elif member.isfile():
+                # If dest exists as a directory, remove it
+                if os.path.isdir(dest):
+                    shutil.rmtree(dest)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                src = tf.extractfile(member)
+                if src:
+                    with open(dest, 'wb') as dst:
+                        shutil.copyfileobj(src, dst)
+                    if member.mode:
+                        os.chmod(dest, member.mode)
+            elif member.issym():
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                if os.path.isdir(dest):
+                    shutil.rmtree(dest)
+                elif os.path.exists(dest):
+                    os.remove(dest)
+                os.symlink(member.linkname, dest)
+
+
+def _detect_strip_prefix(names):
+    """Detect if all files share a single top-level directory to strip."""
+    top_dirs = set()
+    for n in names:
+        parts = n.split('/')
+        if len(parts) > 1 and parts[0]:
+            top_dirs.add(parts[0])
+
+    if len(top_dirs) == 1:
+        prefix = list(top_dirs)[0] + "/"
+        if all(n.startswith(prefix) or n == prefix.rstrip('/') or n == '.' for n in names):
+            print(f"[Updater] Stripping prefix: {prefix}")
+            return prefix
+    return ""
+
+
+def _fix_permissions(staging):
+    """Ensure binaries and scripts in staging are executable on Linux."""
+    for root, dirs, files in os.walk(staging):
+        for f in files:
+            fpath = os.path.join(root, f)
+            # Make .sh scripts and the main binary executable
+            if f.endswith('.sh') or f == 'RedsGarbageGame' or f == 'run.sh':
+                os.chmod(fpath, 0o755)
+            # Check if file looks like an ELF binary
+            try:
+                with open(fpath, 'rb') as fp:
+                    magic = fp.read(4)
+                if magic == b'\x7fELF':
+                    os.chmod(fpath, 0o755)
+            except Exception:
+                pass
 
 
 def apply_staged_update_and_restart():
@@ -219,9 +347,8 @@ def _apply_windows(install_dir, staging):
     """Write a .bat script that copies files after game exits."""
     bat_path = os.path.join(install_dir, "_apply_update.bat")
 
-    # Figure out what to launch after update
     if getattr(sys, 'frozen', False):
-        exe_path = sys.executable  # Full path to the .exe
+        exe_path = sys.executable
         exe_dir = os.path.dirname(exe_path)
         launch_cmd = f'start "" "{exe_path}"'
     else:
@@ -230,7 +357,6 @@ def _apply_windows(install_dir, staging):
         launch_cmd = f'start "" "{python_exe}" "{main_py}"'
         exe_dir = install_dir
 
-    # Batch script: kill process, wait, copy, marker, relaunch, self-delete
     exe_name = os.path.basename(exe_path) if getattr(sys, 'frozen', False) else ""
     bat_content = f'''@echo off
 echo Applying update...
@@ -261,7 +387,6 @@ del "%~f0" >nul 2>&1
             f.write(bat_content)
         print(f"[Updater] Wrote update script: {bat_path}")
 
-        # Launch the bat script hidden (minimized)
         subprocess.Popen(
             ['cmd', '/c', bat_path],
             cwd=install_dir,
@@ -277,11 +402,11 @@ del "%~f0" >nul 2>&1
 
 
 def _apply_unix(install_dir, staging):
-    """Write a shell script for Linux/Mac."""
+    """Write a shell script for Linux/Mac that preserves permissions."""
     sh_path = os.path.join(install_dir, "_apply_update.sh")
 
     if getattr(sys, 'frozen', False):
-        exe = sys.executable  # Full path
+        exe = sys.executable
         launch_cmd = f'"{exe}" &'
     else:
         main_py = os.path.join(install_dir, "main.py")
@@ -289,13 +414,24 @@ def _apply_unix(install_dir, staging):
 
     exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else install_dir
 
+    # Use cp -a to preserve permissions and symlinks
     sh_content = f'''#!/bin/bash
 sleep 2
-cp -rf "{staging}/"* "{install_dir}/"
+
+# Copy staged files, preserving permissions and symlinks
+cp -af "{staging}/"* "{install_dir}/"
+
+# Write success marker
 echo "done" > "{os.path.join(install_dir, '_update_done.marker')}"
+
+# Clean up staging
 rm -rf "{staging}"
+
+# Relaunch
 cd "{exe_dir}"
 {launch_cmd}
+
+# Self-delete
 rm -f "$0"
 '''
 
@@ -316,14 +452,13 @@ rm -f "$0"
 
 
 def _exit_game():
-    """Cleanly exit the game process — close window, then terminate."""
+    """Cleanly exit the game process."""
     try:
         import pygame
         pygame.display.quit()
         pygame.quit()
     except Exception:
         pass
-    # Small delay to let the bat script know we're closing
     import time
     time.sleep(0.3)
     os._exit(0)
@@ -335,7 +470,6 @@ def apply_update(zip_path):
     if stage_update(zip_path):
         install_dir = _get_install_dir()
         staging = _get_staging_dir()
-        # Direct copy (used in tests where we don't need process restart)
         try:
             for root, dirs, files in os.walk(staging):
                 for f in files:
