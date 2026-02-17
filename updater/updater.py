@@ -314,12 +314,16 @@ rm -f "$0"
 
 
 def _exit_game():
-    """Cleanly exit the game process."""
-    import pygame
+    """Cleanly exit the game process — close window, then terminate."""
     try:
+        import pygame
+        pygame.display.quit()
         pygame.quit()
     except Exception:
         pass
+    # Small delay to let the bat script know we're closing
+    import time
+    time.sleep(0.3)
     os._exit(0)
 
 

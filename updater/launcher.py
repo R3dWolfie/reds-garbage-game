@@ -80,12 +80,8 @@ def run_launcher():
                 error_message = "Failed to extract update"
                 return
 
-            # Step 3: Apply via helper script + restart
-            state = "restarting"
-            apply_staged_update_and_restart()
-            # If we get here, something went wrong (should have exited)
-            state = "error"
-            error_message = "Restart failed"
+            # Step 3: Ready to apply — signal main loop to handle exit
+            state = "ready_to_apply"
 
         except Exception as e:
             print(f"[Updater] Update failed: {e}")
@@ -197,6 +193,16 @@ def run_launcher():
         elif state == "restarting":
             txt = font_med.render("Applying update, restarting...", True, (0, 255, 0))
             screen.blit(txt, (cx - txt.get_width() // 2, mid_y))
+
+        elif state == "ready_to_apply":
+            # Draw one frame of "restarting" message, then do the actual exit
+            txt = font_med.render("Applying update, restarting...", True, (0, 255, 0))
+            screen.blit(txt, (cx - txt.get_width() // 2, mid_y))
+            pygame.display.flip()
+            # Now apply from main thread — this launches the bat and exits cleanly
+            apply_staged_update_and_restart()
+            # If we somehow get here, fall through
+            running = False
 
         elif state == "error":
             txt = font_med.render("Update failed", True, (255, 80, 80))
