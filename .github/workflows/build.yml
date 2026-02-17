@@ -1,7 +1,12 @@
-name: Build Windows EXE
+name: Build All Platforms
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. 0.3.4)'
+        required: false
+        default: ''
 
 jobs:
   build-windows:
@@ -15,15 +20,100 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: |
-          pip install pygame pyinstaller requests numpy
+        run: pip install pygame pyinstaller numpy
 
       - name: Build EXE
         run: |
           python -m PyInstaller --name="RedsGarbageGame" --onedir --noconsole --add-data="core;core" --add-data="entities;entities" --add-data="game;game" --add-data="ui;ui" --add-data="networking;networking" --add-data="updater;updater" --add-data="config.json;." main.py
 
-      - name: Upload EXE
+      - name: Create zip
+        run: |
+          cd dist
+          Compress-Archive -Path RedsGarbageGame -DestinationPath RedsGarbageGame-windows.zip
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: RedsGarbageGame-Windows
-          path: dist/RedsGarbageGame/
+          path: dist/RedsGarbageGame-windows.zip
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev libsdl2-mixer-dev libsdl2-image-dev libsdl2-ttf-dev
+          pip install pygame pyinstaller numpy
+
+      - name: Build
+        run: |
+          if [ -f build_linux.spec ]; then
+            python -m PyInstaller build_linux.spec --noconfirm --clean
+          else
+            python -m PyInstaller --name="RedsGarbageGame" --onedir --noconsole --add-data="core:core" --add-data="entities:entities" --add-data="game:game" --add-data="ui:ui" --add-data="networking:networking" --add-data="updater:updater" --add-data="config.json:." main.py
+          fi
+
+      - name: Package
+        run: |
+          chmod +x dist/RedsGarbageGame/RedsGarbageGame
+          cat > dist/RedsGarbageGame/run.sh << 'EOF'
+          #!/bin/bash
+          cd "$(dirname "$0")"
+          ./RedsGarbageGame "$@"
+          EOF
+          chmod +x dist/RedsGarbageGame/run.sh
+          cd dist
+          tar -czf RedsGarbageGame-linux-x86_64.tar.gz RedsGarbageGame/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedsGarbageGame-Linux
+          path: dist/RedsGarbageGame-linux-x86_64.tar.gz
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pygame pyinstaller numpy
+
+      - name: Build
+        run: |
+          if [ -f build_macos.spec ]; then
+            python -m PyInstaller build_macos.spec --noconfirm --clean
+          else
+            python -m PyInstaller --name="RedsGarbageGame" --onedir --noconsole --add-data="core:core" --add-data="entities:entities" --add-data="game:game" --add-data="ui:ui" --add-data="networking:networking" --add-data="updater:updater" --add-data="config.json:." main.py
+          fi
+
+      - name: Package
+        run: |
+          chmod +x dist/RedsGarbageGame/RedsGarbageGame
+          cat > dist/RedsGarbageGame/run.sh << 'EOF'
+          #!/bin/bash
+          cd "$(dirname "$0")"
+          ./RedsGarbageGame "$@"
+          EOF
+          chmod +x dist/RedsGarbageGame/run.sh
+          cd dist
+          tar -czf RedsGarbageGame-macos.tar.gz RedsGarbageGame/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedsGarbageGame-macOS
+          path: dist/RedsGarbageGame-macos.tar.gz
