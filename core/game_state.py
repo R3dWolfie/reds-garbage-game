@@ -30,11 +30,8 @@ MSG_USERNAME = "username"
 # ---- Set SDL hints BEFORE pygame.init() ----
 import os
 import platform
-if platform.system() == "Darwin":
-    # Enable high-DPI rendering on macOS Retina displays
-    os.environ['SDL_VIDEO_HIGHDPI_DISABLED'] = '0'
-    # Tell SDL to use the full pixel resolution
-    os.environ['SDL_HINT_VIDEO_HIGHDPI_DISABLED'] = '0'
+# Note: Do NOT set SDL_VIDEO_HIGHDPI_DISABLED on macOS
+# pygame works in "points" on Retina and SCALED handles the rest
 
 # ---- Initialize pygame ----
 pygame.init()
@@ -79,15 +76,55 @@ class DisplayManager:
         internal_w = settings_module.INTERNAL_WIDTH
         internal_h = settings_module.INTERNAL_HEIGHT
 
+        import platform
+        is_macos = platform.system() == "Darwin"
+
         if fullscreen:
-            # Fullscreen at the selected resolution
-            try:
-                self.screen = pygame.display.set_mode((display_w, display_h), pygame.FULLSCREEN)
-            except Exception:
+            if is_macos:
+                # macOS: use borderless window sized to avoid the notch
+                # Get usable screen area (excludes menu bar and notch)
                 try:
-                    self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+                    desktop_sizes = pygame.display.get_desktop_sizes()
+                    desk_w, desk_h = desktop_sizes[0] if desktop_sizes else (1920, 1080)
                 except Exception:
-                    self.screen = pygame.display.set_mode((internal_w, internal_h))
+                    desk_w, desk_h = 1920, 1080
+
+                # Use 16:10 aspect ratio to avoid notch area
+                # Calculate the largest 16:10 area that fits
+                target_w = desk_w
+                target_h = int(desk_w * 10 / 16)
+                if target_h > desk_h:
+                    target_h = desk_h
+                    target_w = int(desk_h * 16 / 10)
+
+                flags = pygame.NOFRAME
+                try:
+                    # Position window at bottom of screen to avoid notch
+                    os.environ['SDL_VIDEO_WINDOW_POS'] = f'0,{desk_h - target_h}'
+                    self.screen = pygame.display.set_mode((target_w, target_h), flags)
+                except Exception:
+                    self.screen = pygame.display.set_mode((desk_w, desk_h), flags)
+
+                actual_w, actual_h = self.screen.get_size()
+                if (actual_w, actual_h) != (internal_w, internal_h):
+                    self._render_surface = pygame.Surface((internal_w, internal_h))
+                else:
+                    self._render_surface = None
+            else:
+                # Windows/Linux: fullscreen at selected resolution
+                try:
+                    self.screen = pygame.display.set_mode((display_w, display_h), pygame.FULLSCREEN)
+                except Exception:
+                    try:
+                        self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+                    except Exception:
+                        self.screen = pygame.display.set_mode((internal_w, internal_h))
+
+                actual_w, actual_h = self.screen.get_size()
+                if (actual_w, actual_h) != (internal_w, internal_h):
+                    self._render_surface = pygame.Surface((internal_w, internal_h))
+                else:
+                    self._render_surface = None
         else:
             # Windowed at selected resolution
             flags = pygame.NOFRAME if borderless else 0
@@ -95,14 +132,8 @@ class DisplayManager:
                 self.screen = pygame.display.set_mode((display_w, display_h), flags)
             except Exception:
                 self.screen = pygame.display.set_mode((1920, 1080))
-
-        # Always use a render surface — game draws at 1920x1080,
-        # then we scale to whatever the actual screen size is
-        actual_w, actual_h = self.screen.get_size()
-        if (actual_w, actual_h) != (internal_w, internal_h):
             self._render_surface = pygame.Surface((internal_w, internal_h))
-        else:
-            self._render_surface = None
+
         self._windowed = self._render_surface is not None
 
         pygame.display.set_caption("Red's Garbage Game")
