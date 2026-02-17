@@ -126,6 +126,9 @@ def handle_enemy_death(enemy_obj, all_spr, gem_grp, orb_grp, net_mode=None, net_
 
 def apply_magnet(player_obj, gem_grp):
     """Pull nearby XP gems toward the player."""
+    _dt = settings_module.get_dt()
+    if _dt <= 0:
+        return  # Paused — don't pull
     radius = player_obj.get_magnet_radius()
     if radius <= 0:
         return
@@ -133,12 +136,15 @@ def apply_magnet(player_obj, gem_grp):
     for gem in gem_grp:
         dist = math.hypot(gem.rect.centerx - px, gem.rect.centery - py)
         if dist <= radius:
-            pull_speed = max(3, 8 - (dist / radius) * 5)
+            pull_speed = max(3, 8 - (dist / radius) * 5) * _dt
             gem.move_toward((px, py), pull_speed)
 
 
 def apply_gold_magnet(player_obj, gold_grp):
     """Pull nearby gold coins toward the player."""
+    _dt = settings_module.get_dt()
+    if _dt <= 0:
+        return  # Paused — don't pull
     perma = settings_module.config.get("perma_upgrades", {})
     base_radius = 60
     gold_mag_lvl = perma.get("gold_magnet", 0)
@@ -147,7 +153,7 @@ def apply_gold_magnet(player_obj, gold_grp):
     for coin in gold_grp:
         dist = math.hypot(coin.rect.centerx - px, coin.rect.centery - py)
         if dist <= radius:
-            pull_speed = max(3, 7 - (dist / radius) * 4)
+            pull_speed = max(3, 7 - (dist / radius) * 4) * _dt
             coin.move_toward((px, py), pull_speed)
 
 

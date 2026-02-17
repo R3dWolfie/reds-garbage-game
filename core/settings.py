@@ -605,6 +605,13 @@ RARITY_COLORS = {
     "exotic":    (255, 60, 120),
 }
 
+_current_dt = 1.0  # Updated each frame by game loop
+
+def set_dt(dt_val):
+    """Called by game loop each frame with the real delta time."""
+    global _current_dt
+    _current_dt = dt_val
+
 def get_dt():
-    """Delta time multiplier: at 60fps dt=1.0, at 120fps dt=0.5, etc."""
-    return 60.0 / max(1, FPS) if FPS > 0 else 1.0
+    """Delta time multiplier: at 60fps dt=1.0, at 30fps dt=2.0, at 120fps dt=0.5."""
+    return _current_dt

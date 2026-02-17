@@ -4,9 +4,9 @@
 import pygame, sys, random, math
 import core.settings as settings_module
 from core.settings import *
+import core.game_state as _gs
 from core.game_state import (
     display_mgr, clock, gs,
-    font, small_font, title_font, menu_font, header_font, desc_font,
     MSG_UPGRADE_PAUSE, MSG_UPGRADE_RESUME
 )
 from ui.hud import draw_enemy_health_bars
@@ -126,6 +126,15 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
     if weapon == "beam":
         pool = [u for u in pool if "piercing" not in u["key"] and "multishot" not in u["key"]]
 
+    # Remove upgrades that have hit their cap
+    s = player_obj.stats
+    if s.get("fire_rate", 99) <= 2:
+        pool = [u for u in pool if "fire_rate" not in u["key"]]
+    if s.get("bullet_size", 1.0) >= 3.0:
+        pool = [u for u in pool if "bullet_size" not in u["key"]]
+    if s.get("multishot", 1) >= 10:
+        pool = [u for u in pool if "multishot" not in u["key"]]
+
     weights = []
     for item in pool:
         base_key = item["key"].replace("big_","")
@@ -171,7 +180,7 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
         # Title — menu_font, matches other menus
         tc = GOLD if is_big else ACCENT
         ts = "BIG UPGRADE!" if is_big else "LEVEL UP!"
-        tt = menu_font.render(ts, True, tc)
+        tt = _gs.menu_font.render(ts, True, tc)
         title_y = max(16, sh // 2 - 165)
         surf.blit(tt, (sw//2 - tt.get_width()//2, title_y))
 
@@ -213,7 +222,7 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
             pygame.draw.rect(surf, bcolor, cr, bw, border_radius=5)
 
             # Keybind badge
-            kt = desc_font.render(str(i+1), True, bc if not is_flash else (255,255,255))
+            kt = _gs.desc_font.render(str(i+1), True, bc if not is_flash else (255,255,255))
             kbd_r = pygame.Rect(cx+4, cy+4, 14, 14)
             pygame.draw.rect(surf, (20,24,40), kbd_r, 0, border_radius=3)
             pygame.draw.rect(surf, bc if not is_flash else (255,255,255), kbd_r, 1, border_radius=3)
@@ -228,11 +237,11 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
             words = opt["name"].split(); lines = []; cur = ""
             for w in words:
                 test = cur+" "+w if cur else w
-                if small_font.size(test)[0] < card_w-10: cur = test
+                if _gs.small_font.size(test)[0] < card_w-10: cur = test
                 else: lines.append(cur); cur = w
             if cur: lines.append(cur)
             for j, line in enumerate(lines):
-                nt = small_font.render(line, True, (255,255,255) if hov else bc)
+                nt = _gs.small_font.render(line, True, (255,255,255) if hov else bc)
                 surf.blit(nt, (cx+card_w//2-nt.get_width()//2, ny+j*16))
 
             # Description (desc_font, word-wrapped)
@@ -240,12 +249,12 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
             dwords = opt.get("desc","").split(); dlines = []; cur = ""
             for w in dwords:
                 test = cur+" "+w if cur else w
-                if desc_font.size(test)[0] < card_w-10: cur = test
+                if _gs.desc_font.size(test)[0] < card_w-10: cur = test
                 else: dlines.append(cur); cur = w
             if cur: dlines.append(cur)
             max_desc_lines = max(1, (card_h - (dy - cy) - 52) // 13)
             for j, line in enumerate(dlines[:max_desc_lines]):
-                dt = desc_font.render(line, True, TEXT_MID if hov else TEXT_DIM)
+                dt = _gs.desc_font.render(line, True, TEXT_MID if hov else TEXT_DIM)
                 surf.blit(dt, (cx+card_w//2-dt.get_width()//2, dy+j*13))
 
             # Bottom stat
@@ -254,16 +263,16 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
             base_key = opt["key"].replace("big_","")
             stat_info = _STAT_MAP.get(base_key, (base_key.upper()[:5], (180,180,200)))
             stat_label, stat_col = stat_info
-            sl = desc_font.render(stat_label, True, TEXT_DIM)
+            sl = _gs.desc_font.render(stat_label, True, TEXT_DIM)
             surf.blit(sl, (cx+card_w//2-sl.get_width()//2, bsy+3))
             val = _get_stat_value(player_obj, opt["key"])
-            vt = small_font.render(val, True, stat_col)
+            vt = _gs.small_font.render(val, True, stat_col)
             surf.blit(vt, (cx+card_w//2-vt.get_width()//2, bsy+17))
 
             # Count badge
             count = player_obj.upgrade_counts.get(base_key, 0)
             if count > 0:
-                badge = desc_font.render(f"x{count}", True, bc)
+                badge = _gs.desc_font.render(f"x{count}", True, bc)
                 bw2 = badge.get_width()+6
                 br = pygame.Rect(cx+card_w-bw2-3, cy+4, bw2, 14)
                 pygame.draw.rect(surf, (20,24,40), br, 0, border_radius=3)
@@ -287,8 +296,11 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
         surf.blit(abg, auto_rect.topleft)
         pygame.draw.rect(surf, ac if (auto_hov or _auto_upgrade_on) else TEXT_DIM,
                          auto_rect, 1, border_radius=4)
-        auto_label = "AUTO: ON  [Q]" if _auto_upgrade_on else "AUTO: OFF  [Q]"
-        at = desc_font.render(auto_label, True, ac if _auto_upgrade_on else (TEXT_MID if auto_hov else TEXT_DIM))
+        _kb = settings_module.config.get("keybinds", {})
+        _auto_key_code = _kb.get("auto_upgrade", pygame.K_q)
+        _auto_key_name = pygame.key.name(_auto_key_code).upper()
+        auto_label = f"AUTO: ON  [{_auto_key_name}]" if _auto_upgrade_on else f"AUTO: OFF  [{_auto_key_name}]"
+        at = _gs.desc_font.render(auto_label, True, ac if _auto_upgrade_on else (TEXT_MID if auto_hov else TEXT_DIM))
         surf.blit(at, (auto_rect.centerx-at.get_width()//2, auto_rect.centery-at.get_height()//2))
 
         # Flash animation
@@ -313,7 +325,7 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
             if bar_ratio > 0:
                 pygame.draw.rect(surf, ac, (auto_rect.x+2, bar_y, int(bar_w*bar_ratio), 3), border_radius=2)
             secs = max(0, 2.0 - auto_timer/60.0)
-            ct = desc_font.render(f"{secs:.1f}s", True, ac)
+            ct = _gs.desc_font.render(f"{secs:.1f}s", True, ac)
             surf.blit(ct, (auto_rect.right+3, bar_y-2))
             if auto_timer >= 120:
                 flash_active = True; flash_timer = 0
@@ -322,7 +334,8 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
         else:
             auto_timer = 0
 
-        hint = desc_font.render("Click or 1-5  |  Q = auto", True, TEXT_DIM)
+        _hint_key = pygame.key.name(settings_module.config.get("keybinds", {}).get("auto_upgrade", pygame.K_q)).upper()
+        hint = _gs.desc_font.render(f"Click or 1-5  |  {_hint_key} = auto", True, TEXT_DIM)
         surf.blit(hint, (sw//2-hint.get_width()//2, min(sh-12, auto_rect.bottom+12)))
 
         display_mgr.present()

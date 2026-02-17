@@ -17,14 +17,14 @@ class PlayerGunner(PlayerBase):
 
     BASE_STATS = {
         "speed": 4,
-        "fire_rate": 12,        # Extremely fast fire
+        "fire_rate": 14,        # Fast but not insane (was 12)
         "bullet_speed": 9,
-        "max_health": 80,       # Fragile
-        "multishot": 3,         # Starts with 3 bullets
-        "damage": 0.5,            # Very low per-bullet
+        "max_health": 70,       # Fragile (was 80)
+        "multishot": 2,         # Starts with 2 bullets (was 3)
+        "damage": 0.4,          # Very low per-bullet (was 0.5)
         "piercing": 1,
         "magnet": 0,
-        "bullet_size": 0.7,     # Smaller bullets
+        "bullet_size": 0.6,     # Smaller bullets (was 0.7)
         "xp_gain": 1.0,
         "accuracy": 0.5,        # Wide spread
     }

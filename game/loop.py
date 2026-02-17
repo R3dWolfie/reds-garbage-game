@@ -150,7 +150,7 @@ def run_game(class_key, starting_wave=1):
     enemies_to_spawn = 0
     enemies_spawned = 0
     spawn_timer = 0
-    BASE_SPAWN_DELAY = 30  # Starting spawn delay (frames)
+    BASE_SPAWN_DELAY = 20  # Starting spawn delay (frames) — was 30
     wave_active = False
     wave_cooldown = 0
     WAVE_COOLDOWN_TIME = 120
@@ -160,7 +160,7 @@ def run_game(class_key, starting_wave=1):
     # Party XP (shared in multiplayer, only tracked on host)
     party_level = 1
     party_xp = 0
-    party_xp_to_next = 5
+    party_xp_to_next = 8
     upgrade_pending_players = set()  # Set of player IDs waiting to pick upgrades
 
     # Helper function for enemies to find nearest player
@@ -208,11 +208,11 @@ def run_game(class_key, starting_wave=1):
         wave_active = True
         spawn_timer = 0
         wave_banner_timer = 120
-        trigger_shake(8, 5)
+        net_shake(8, 5)
         vfx.wave_start_effect(settings_module.SCREEN_WIDTH, settings_module.SCREEN_HEIGHT)
         if wave_num % 10 == 0:
             sounds.play_boss_spawn()
-            trigger_shake(12, 8)
+            net_shake(12, 8)
         else:
             sounds.play_wave_start()
         boss = None
@@ -247,7 +247,7 @@ def run_game(class_key, starting_wave=1):
         for lv in range(auto_levels):
             player_obj.level += 1
             player_obj.current_xp = 0
-            player_obj.xp_to_next_level = int(5 + player_obj.level ** 1.4 * 2)
+            player_obj.xp_to_next_level = int(8 + player_obj.level ** 1.5 * 3)
             # Every 5th level = big upgrade, otherwise normal
             if (lv + 1) % 5 == 0:
                 pick = random.choice(BIG_UPGRADE_POOL)
@@ -269,10 +269,23 @@ def run_game(class_key, starting_wave=1):
     active_beam = None  # {"start": (x,y), "end": (x,y), "timer": int, "width": float, "dmg": int}
     beam_hit_this_frame = set()  # Track enemies already hit by beam this frame
 
+    def net_shake(frames, intensity):
+        """Trigger shake locally and broadcast to multiplayer."""
+        trigger_shake(frames, intensity)
+        if gs.net_mode == "host" and gs.net_host:
+            gs.net_host.broadcast(MSG_SHAKE, {"f": frames, "i": intensity})
+
     while True:
         # Delta time: real ms since last frame, normalized to 60fps baseline
         raw_dt = clock.get_time()  # ms since last tick
-        dt = max(0.1, min(4.0, raw_dt / 16.667))  # 16.667ms = 60fps, clamp to prevent insanity
+        dt = max(0.016, min(4.0, raw_dt / 16.667))  # 16.667ms = 60fps, clamp to prevent insanity
+
+        # Clamp dt to 0 during pause — prevents catch-up
+        if gs.upgrade_paused_by:
+            dt = 0.0
+
+        # Store dt globally so all entities can access it
+        settings_module.set_dt(dt)
 
         sw = settings_module.SCREEN_WIDTH
         sh = settings_module.SCREEN_HEIGHT
@@ -293,6 +306,8 @@ def run_game(class_key, starting_wave=1):
                         elif gs.net_mode == "client" and gs.net_client:
                             gs.net_client.send(MSG_UPGRADE_PAUSE, {"player_name": gs.local_username, "level": "settings"})
                         action = show_pause_menu()
+                        # Reset clock to prevent dt catch-up from menu time
+                        clock.tick(settings_module.FPS or 0)
                         # Unpause on close
                         if gs.net_mode == "host" and gs.net_host:
                             gs.upgrade_paused_by = None
@@ -331,7 +346,7 @@ def run_game(class_key, starting_wave=1):
                     if enemies_spawned < enemies_to_spawn:
                         spawn_timer += dt
                         # Spawn faster at higher waves
-                        spawn_delay = max(4, int(BASE_SPAWN_DELAY - current_wave * 0.3))
+                        spawn_delay = max(2, int(BASE_SPAWN_DELAY - current_wave * 0.5))
                         if spawn_timer >= spawn_delay:
                             spawn_timer = 0
 
@@ -472,11 +487,24 @@ def run_game(class_key, starting_wave=1):
                             }
                             if enemy_type == "swarm":
                                 # Spawn a cluster of 3-5 swarm enemies
+                                _tier = current_wave // 10
                                 for _ in range(random.randint(3, 5)):
                                     se = SwarmEnemy(player_obj, current_wave)
                                     se._net_id = id(se)
                                     se.get_nearest_player_pos = make_nearest_player_finder(se)
+                                    if _tier > 0:
+                                        se.max_health = int(se.max_health * (1.0 + _tier * 0.5))
+                                        se.health = se.max_health
+                                        se.speed *= (1.0 + _tier * 0.12)
+                                        se.damage = int(se.damage * (1.0 + _tier * 0.3))
                                     all_sprites.add(se); enemies_grp.add(se)
+                                    if gs.net_mode == "host" and gs.net_host:
+                                        gs.net_host.broadcast(MSG_ENEMY_SPAWN, {
+                                            "enemy_id": se._net_id, "x": se.rect.x, "y": se.rect.y,
+                                            "is_boss": False, "wave": current_wave,
+                                            "max_health": se.max_health, "health": se.health,
+                                            "enemy_type": "swarm", "speed": se.speed,
+                                        })
                                 e = None  # Already spawned
                             elif enemy_type in enemy_creators:
                                 e = enemy_creators[enemy_type]()
@@ -486,6 +514,13 @@ def run_game(class_key, starting_wave=1):
                             if e is not None:
                                 e._net_id = id(e)
                                 e.get_nearest_player_pos = make_nearest_player_finder(e)
+                                # Scale enemy stats every 10 waves
+                                _tier = current_wave // 10
+                                if _tier > 0:
+                                    e.max_health = int(e.max_health * (1.0 + _tier * 0.5))
+                                    e.health = e.max_health
+                                    e.speed *= (1.0 + _tier * 0.12)
+                                    e.damage = int(e.damage * (1.0 + _tier * 0.3))
                                 all_sprites.add(e)
                                 enemies_grp.add(e)
                             enemies_spawned += 1
@@ -499,6 +534,8 @@ def run_game(class_key, starting_wave=1):
                                     "wave": current_wave,
                                     "max_health": e.max_health,
                                     "health": e.health,
+                                    "enemy_type": enemy_type,
+                                    "speed": e.speed,
                                 })
                     else:
                         if len(enemies_grp) == 0:
@@ -508,7 +545,7 @@ def run_game(class_key, starting_wave=1):
                             if gs.net_mode == "host" and gs.net_host:
                                 gs.net_host.broadcast(MSG_WAVE_COMPLETE, {"wave": current_wave})
                 else:
-                    wave_cooldown -= 1
+                    wave_cooldown -= dt
                     if wave_cooldown <= 0:
                         current_wave += 1
                         start_wave(current_wave)
@@ -523,6 +560,45 @@ def run_game(class_key, starting_wave=1):
                 enemy_projectiles_grp.update()
             else:
                 all_sprites.update()
+
+            # ── XP Orb Condensing (every ~1.5 seconds) ──
+            _condense_timer = getattr(run_game, '_condense_timer', 0) + 1
+            run_game._condense_timer = _condense_timer
+            if _condense_timer >= 90 and len(gems_grp) > 30:
+                run_game._condense_timer = 0
+                gem_list = list(gems_grp)
+                used = set()
+                for i, g1 in enumerate(gem_list):
+                    if id(g1) in used:
+                        continue
+                    cluster = [g1]
+                    cx, cy = g1.rect.centerx, g1.rect.centery
+                    for j in range(i + 1, len(gem_list)):
+                        g2 = gem_list[j]
+                        if id(g2) in used:
+                            continue
+                        if abs(g2.rect.centerx - cx) < 60 and abs(g2.rect.centery - cy) < 60:
+                            cluster.append(g2)
+                    if len(cluster) >= 8:
+                        total_xp = sum(getattr(g, 'xp_value', 1) for g in cluster)
+                        avg_x = sum(g.rect.centerx for g in cluster) // len(cluster)
+                        avg_y = sum(g.rect.centery for g in cluster) // len(cluster)
+                        for g in cluster:
+                            used.add(id(g))
+                            g.kill()
+                        mega = ExpGem((avg_x, avg_y), xp_value=total_xp)
+                        all_sprites.add(mega)
+                        gems_grp.add(mega)
+
+            # ── Despawn old health orbs and gold (20s) ──
+            if _condense_timer == 45:  # Offset from gem condense
+                _now_ms = pygame.time.get_ticks()
+                for orb in list(health_orbs_grp):
+                    if _now_ms - getattr(orb, 'spawn_time', _now_ms) > 20000:
+                        orb.kill()
+                for coin in list(gold_grp):
+                    if _now_ms - getattr(coin, 'spawn_time', _now_ms) > 20000:
+                        coin.kill()
 
             # Reset frost slow each frame
             player_obj._frost_slowed = False
@@ -796,14 +872,21 @@ def run_game(class_key, starting_wave=1):
             apply_magnet(player_obj, health_orbs_grp)  # Magnet picks up health orbs too
 
             # ---- AUTO-FIRE ----
-            if fire_cooldown <= 0 and not spectating:
+            if fire_cooldown <= 0 and not spectating and len(bullets_grp) < 200:
                 # Get the SINGLE nearest enemy
                 targets = get_nearest_enemies(player_obj, enemies_grp, 1)
 
                 if targets:
                     nearest_enemy = targets[0]
                     weapon = player_obj.get_weapon_type()
-                    multishot_count = player_obj.stats["multishot"]
+                    multishot_count = min(10, player_obj.stats["multishot"])  # Hard cap at 10
+
+                    # Diminishing damage for extra multishot bullets
+                    # First 3 bullets: full damage. 4-6: 70%. 7-10: 50%
+                    def _shot_dmg_mult(shot_idx):
+                        if shot_idx < 3: return 1.0
+                        if shot_idx < 6: return 0.7
+                        return 0.5
 
                     # Calculate base angle to nearest enemy
                     dx = nearest_enemy.rect.centerx - player_obj.rect.centerx
@@ -820,6 +903,7 @@ def run_game(class_key, starting_wave=1):
 
                     # Fire multishot bullets in a cone toward nearest enemy
                     for i in range(multishot_count):
+                        _dmg_mult = _shot_dmg_mult(i)
                         # Calculate angle offset for this bullet in the cone
                         if multishot_count == 1:
                             angle_offset = 0
@@ -835,7 +919,7 @@ def run_game(class_key, starting_wave=1):
                         target_x = player_obj.rect.centerx + math.cos(bullet_angle) * spread_distance
                         target_y = player_obj.rect.centery + math.sin(bullet_angle) * spread_distance
 
-                        bsize = player_obj.stats.get("bullet_size", 1.0)
+                        bsize = min(3.0, player_obj.stats.get("bullet_size", 1.0))
                         if weapon == "beam":
                             # Arcanist beam — chains to enemies!
                             beam_w = int(12 * bsize * (1 + (multishot_count - 1) * 0.4))
@@ -993,6 +1077,7 @@ def run_game(class_key, starting_wave=1):
                                        size=bsize, bounces=_bullet_bounces,
                                        color=player_obj.get_bullet_color())
                         if weapon != "beam":
+                            b._dmg_mult = _dmg_mult
                             all_sprites.add(b)
                             bullets_grp.add(b)
 
@@ -1049,6 +1134,8 @@ def run_game(class_key, starting_wave=1):
                     bullet.hit_enemies.append(enemy)
                     # Use network damage if this bullet came from a remote player
                     dmg = getattr(bullet, '_net_damage', None) or player_obj.stats["damage"]
+                    # Diminishing returns for extra multishot bullets
+                    dmg = max(1, int(dmg * getattr(bullet, '_dmg_mult', 1.0)))
                     # Crit chance
                     is_crit = False
                     if hasattr(player_obj, 'crit_chance') and player_obj.crit_chance > 0:
@@ -1187,20 +1274,28 @@ def run_game(class_key, starting_wave=1):
                             gs.net_host.broadcast(MSG_ENEMY_DEAD, {"enemy_id": getattr(enemy, '_net_id', -1)})
                     handle_enemy_death(enemy, all_sprites, gems_grp, health_orbs_grp, gs.net_mode, gs.net_host, gold_grp)
 
-            # Gems
-            gem_hits = pygame.sprite.spritecollide(player_obj, gems_grp, True)
-            for gem in gem_hits:
+            # Gems (dead players don't collect)
+            if not spectating:
+              gem_hits = pygame.sprite.spritecollide(player_obj, gems_grp, True)
+              for gem in gem_hits:
                 sounds.play_gem()
                 vfx.gem_sparkle(gem.rect.centerx, gem.rect.centery)
+                _gem_xp = getattr(gem, 'xp_value', 1)
+                # Broadcast pickup so other players remove this orb
+                _oid = getattr(gem, '_orb_id', 0)
+                if _oid and gs.net_mode == "host" and gs.net_host:
+                    gs.net_host.broadcast(MSG_ORB_PICKUP, {"id": _oid, "type": "gem"})
+                elif _oid and gs.net_mode == "client" and gs.net_client:
+                    gs.net_client.send(MSG_ORB_PICKUP, {"id": _oid, "type": "gem"})
                 if gs.net_mode in ("host", "client"):
                     # Multiplayer: report gem to host for party XP
                     if gs.net_mode == "host":
-                        party_xp += 1
+                        party_xp += _gem_xp
                         # Check for party level up (host only)
                         if party_xp >= party_xp_to_next:
                             party_level += 1
                             party_xp = 0
-                            party_xp_to_next = int(5 + party_level ** 1.4 * 2)
+                            party_xp_to_next = int(8 + party_level ** 1.5 * 3)
                             is_big = party_level % 5 == 0
                             # Reset pending players set (host + all connected clients)
                             upgrade_pending_players = {0}  # Host is player 0
@@ -1226,16 +1321,16 @@ def run_game(class_key, starting_wave=1):
                         gs.net_client.send(MSG_GEM_COLLECT, {})
                 else:
                     # Singleplayer: local XP
-                    xp_gained = 1
+                    xp_gained = _gem_xp
                     if xp_bonus_chance > 0 and random.random() < xp_bonus_chance:
-                        xp_gained = 2  # Double XP!
+                        xp_gained *= 2  # Double XP!
                     # Apply XP gain multiplier from upgrades
                     xp_gained = max(1, int(xp_gained * player_obj.stats.get("xp_gain", 1.0)))
                     player_obj.current_xp += xp_gained
                     if player_obj.current_xp >= player_obj.xp_to_next_level:
                         player_obj.level += 1
                         player_obj.current_xp = 0
-                        player_obj.xp_to_next_level = int(5 + player_obj.level ** 1.4 * 2)
+                        player_obj.xp_to_next_level = int(8 + player_obj.level ** 1.5 * 3)
                         sounds.play_level_up()
                         vfx.level_up_burst(player_obj.rect.centerx, player_obj.rect.centery)
                         trigger_shake(8, 6)
@@ -1246,8 +1341,9 @@ def run_game(class_key, starting_wave=1):
                             show_upgrade_menu(False, player_obj, all_sprites, enemies_grp, gs.net_mode, gs.net_host,
                                               gs.net_client)
 
-            # Gold Coins
-            coin_hits = pygame.sprite.spritecollide(player_obj, gold_grp, True)
+            # Gold Coins (dead players don't collect)
+            if not spectating:
+              coin_hits = pygame.sprite.spritecollide(player_obj, gold_grp, True)
             for coin in coin_hits:
                 gold_this_run += coin.value
                 add_gold(coin.value)
@@ -1267,13 +1363,14 @@ def run_game(class_key, starting_wave=1):
                 for gem in collected:
                     gem.kill()
                     sounds.play_gem()
+                    _rgem_xp = getattr(gem, 'xp_value', 1)
                     if gs.net_mode in ("host", "client"):
                         if gs.net_mode == "host":
-                            party_xp += 1
+                            party_xp += _rgem_xp
                             if party_xp >= party_xp_to_next:
                                 party_level += 1
                                 party_xp = 0
-                                party_xp_to_next = int(5 + party_level ** 1.4 * 2)
+                                party_xp_to_next = int(8 + party_level ** 1.5 * 3)
                                 is_big = party_level % 5 == 0
                                 upgrade_pending_players = {0}
                                 upgrade_pending_players.update(gs.net_host.get_remote_states().keys())
@@ -1288,15 +1385,15 @@ def run_game(class_key, starting_wave=1):
                         elif gs.net_mode == "client":
                             gs.net_client.send(MSG_GEM_COLLECT, {})
                     else:
-                        xp_gained = 1
+                        xp_gained = _rgem_xp
                         if xp_bonus_chance > 0 and random.random() < xp_bonus_chance:
-                            xp_gained = 2
+                            xp_gained *= 2
                         xp_gained = max(1, int(xp_gained * player_obj.stats.get("xp_gain", 1.0)))
                         player_obj.current_xp += xp_gained
                         if player_obj.current_xp >= player_obj.xp_to_next_level:
                             player_obj.level += 1
                             player_obj.current_xp = 0
-                            player_obj.xp_to_next_level = int(5 + player_obj.level ** 1.4 * 2)
+                            player_obj.xp_to_next_level = int(8 + player_obj.level ** 1.5 * 3)
                             sounds.play_level_up()
                             is_big = player_obj.level % 5 == 0
                             show_upgrade_menu(is_big, player_obj, all_sprites, enemies_grp, gs.net_mode, gs.net_host, gs.net_client)
@@ -1353,16 +1450,20 @@ def run_game(class_key, starting_wave=1):
                                     all_sprites.add(tiny2); enemies_grp.add(tiny2)
                             handle_enemy_death(enemy, all_sprites, gems_grp, health_orbs_grp, gs.net_mode, gs.net_host, gold_grp)
 
-            # Health Orbs
-            orb_hits = pygame.sprite.spritecollide(player_obj, health_orbs_grp, True)
-            for orb in orb_hits:
+            # Health Orbs (dead players don't collect)
+            if not spectating:
+              orb_hits = pygame.sprite.spritecollide(player_obj, health_orbs_grp, True)
+              for orb in orb_hits:
                 player_obj.heal(orb.heal_amount)
 
-            # Enemies hit Player
-            hit_enemies = pygame.sprite.spritecollide(player_obj, enemies_grp, False)
-            # Filter out phased wraiths (intangible) and invisible shades
-            hit_enemies = [e for e in hit_enemies if not (isinstance(e, PhaseWraith) and e.phased_out)]
-            hit_enemies = [e for e in hit_enemies if not (isinstance(e, ShadowShade) and not e.visible)]
+            # Enemies hit Player (dead players are invulnerable)
+            if not spectating:
+              hit_enemies = pygame.sprite.spritecollide(player_obj, enemies_grp, False)
+              # Filter out phased wraiths (intangible) and invisible shades
+              hit_enemies = [e for e in hit_enemies if not (isinstance(e, PhaseWraith) and e.phased_out)]
+              hit_enemies = [e for e in hit_enemies if not (isinstance(e, ShadowShade) and not e.visible)]
+            else:
+              hit_enemies = []
             # Charger bull does extra damage while charging
             for e in hit_enemies:
                 if isinstance(e, ChargerBull) and e.state == "charging":
@@ -1468,7 +1569,7 @@ def run_game(class_key, starting_wave=1):
 
         # Health regeneration
         if _health_regen_rate > 0 and not spectating:
-            _health_regen_accum += _health_regen_rate / FPS
+            _health_regen_accum += _health_regen_rate * dt / 60.0  # dt=1 at 60fps, so /60 gives per-second rate
             if _health_regen_accum >= 1.0:
                 heal_amt = int(_health_regen_accum)
                 _health_regen_accum -= heal_amt
@@ -1479,7 +1580,7 @@ def run_game(class_key, starting_wave=1):
 
         # Shield recharge
         if _shield_level > 0 and not _shield_active:
-            _shield_timer += 1
+            _shield_timer += dt
             if _shield_timer >= _shield_recharge_time:
                 _shield_active = True
                 _shield_timer = 0
@@ -1594,7 +1695,7 @@ def run_game(class_key, starting_wave=1):
                 pygame.draw.line(bs, (255, 255, 255, int(ba * 0.8)),
                                  seg_start, seg_end, max(1, bw // 2))
             shake_surf.blit(bs, (0, 0))
-            active_beam["timer"] -= 1
+            active_beam["timer"] -= dt
         draw_enemy_health_bars(shake_surf, enemies_grp)
 
         # ── Draw laser beams and charge indicators
@@ -1720,13 +1821,18 @@ def run_game(class_key, starting_wave=1):
                 enemy_timer = 0
                 enemy_states = []
                 for e in enemies_grp:
-                    enemy_states.append({
+                    edata = {
                         "enemy_id": getattr(e, '_net_id', id(e)),
                         "x": e.rect.x,
                         "y": e.rect.y,
                         "health": e.health,
                         "max_health": e.max_health,
-                    })
+                    }
+                    # Send velocity for fast-moving enemies
+                    if hasattr(e, 'velocity_x'):
+                        edata["vx"] = e.velocity_x
+                        edata["vy"] = e.velocity_y
+                    enemy_states.append(edata)
                 if enemy_states:
                     gs.net_host.broadcast(MSG_ENEMY_UPDATE, {"enemies": enemy_states})
 
@@ -1813,7 +1919,7 @@ def run_game(class_key, starting_wave=1):
                     if party_xp >= party_xp_to_next:
                         party_level += 1
                         party_xp = 0
-                        party_xp_to_next = int(5 + party_level ** 1.4 * 2)
+                        party_xp_to_next = int(8 + party_level ** 1.5 * 3)
                         is_big = party_level % 5 == 0
                         # Reset pending players (host + all clients)
                         upgrade_pending_players = {0}
@@ -1843,6 +1949,18 @@ def run_game(class_key, starting_wave=1):
                         # Everyone done — resume game
                         gs.upgrade_paused_by = None
                         gs.net_host.broadcast(MSG_UPGRADE_RESUME, {})
+
+                elif msg_type == MSG_ORB_PICKUP:
+                    # Client picked up an orb — relay to all other clients and remove locally
+                    _pickup_id = data.get("id", 0)
+                    if _pickup_id:
+                        gs.net_host.broadcast(MSG_ORB_PICKUP, data, exclude=from_id)
+                        otype = data.get("type", "gem")
+                        target_grp = gems_grp if otype == "gem" else health_orbs_grp
+                        for orb in list(target_grp):
+                            if getattr(orb, '_orb_id', 0) == _pickup_id:
+                                orb.kill()
+                                break
 
             # --- Host: update & broadcast remote player ghosts ---
             usernames = gs.net_host.get_usernames()
@@ -1957,7 +2075,9 @@ def run_game(class_key, starting_wave=1):
                     wave = data.get("wave", 1)
                     max_hp = data.get("max_health", 1)
                     hp = data.get("health", 1)
-                    ghost = RemoteEnemyGhost(eid, x, y, is_boss, wave)
+                    etype = data.get("enemy_type", "basic")
+                    espeed = data.get("speed", 2)
+                    ghost = RemoteEnemyGhost(eid, x, y, is_boss, wave, etype, espeed)
                     ghost.max_health = max_hp
                     ghost.health = hp
                     gs.remote_enemies[eid] = ghost
@@ -1983,8 +2103,11 @@ def run_game(class_key, starting_wave=1):
                 elif msg_type == MSG_GEM_SPAWN:
                     # Host spawned gems — create them locally
                     positions = data.get("positions", [])
-                    for pos in positions:
+                    ids = data.get("ids", [])
+                    for i, pos in enumerate(positions):
                         gem = ExpGem(pos)
+                        if i < len(ids):
+                            gem._orb_id = ids[i]
                         all_sprites.add(gem)
                         gems_grp.add(gem)
 
@@ -1994,6 +2117,7 @@ def run_game(class_key, starting_wave=1):
                     y = data.get("y", 0)
                     heal = data.get("heal", 20)
                     orb = HealthOrb((x, y))
+                    orb._orb_id = data.get("id", 0)
                     orb.heal_amount = heal
                     all_sprites.add(orb)
                     health_orbs_grp.add(orb)
@@ -2013,6 +2137,20 @@ def run_game(class_key, starting_wave=1):
                     settings_module.config["gold"] = synced_gold
                     from core.settings import save_config
                     save_config(settings_module.config)
+
+                elif msg_type == MSG_ORB_PICKUP:
+                    # Another player picked up an orb — remove it locally
+                    _pickup_id = data.get("id", 0)
+                    if _pickup_id:
+                        otype = data.get("type", "gem")
+                        target_grp = gems_grp if otype == "gem" else health_orbs_grp
+                        for orb in list(target_grp):
+                            if getattr(orb, '_orb_id', 0) == _pickup_id:
+                                orb.kill()
+                                break
+
+                elif msg_type == MSG_SHAKE:
+                    trigger_shake(data.get("f", 5), data.get("i", 4))
 
                 elif msg_type == "hat_drop":
                     # Host says a hat dropped — add to our collection too
@@ -2037,7 +2175,7 @@ def run_game(class_key, starting_wave=1):
                     # Update party XP variables (nonlocal to update run_game scope)
                     party_level = data.get("level", 1)
                     party_xp = 0  # Reset after level up
-                    party_xp_to_next = int(5 + party_level ** 1.4 * 2)  # Increase threshold
+                    party_xp_to_next = int(8 + party_level ** 1.5 * 3)  # Increase threshold
                     is_big = data.get("is_big", False)
                     sounds.play_level_up()
                     show_upgrade_menu(is_big, player_obj, all_sprites, enemies_grp, gs.net_mode, gs.net_host, gs.net_client)
@@ -2221,7 +2359,7 @@ def run_game(class_key, starting_wave=1):
 
         if wave_banner_timer > 0:
             draw_wave_banner(surf, current_wave)
-            wave_banner_timer -= 1
+            wave_banner_timer -= dt
 
         # Hat drop notifications
         from core.settings import RARITY_COLORS
@@ -2229,7 +2367,7 @@ def run_game(class_key, starting_wave=1):
         for notif in hat_notifications[:]:
             if notif["timer"] <= 0:
                 hat_notifications.remove(notif); continue
-            notif["timer"] -= 1
+            notif["timer"] -= dt
             alpha = min(255, notif["timer"] * 3)
             rc = RARITY_COLORS.get(notif["rarity"], (180,180,190))
             # Background

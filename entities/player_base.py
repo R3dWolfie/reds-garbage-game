@@ -68,7 +68,7 @@ class PlayerBase(pygame.sprite.Sprite):
         # Leveling
         self.level = 1
         self.current_xp = 0
-        self.xp_to_next_level = 5
+        self.xp_to_next_level = 8
 
         # Collision damage (for tank class)
         self.collision_damage = 0
@@ -153,27 +153,29 @@ class PlayerBase(pygame.sprite.Sprite):
                     self.dash_duration = 0
                     self.dash_invincible = False
                 else:
-                    self.rect.x += self.dash_dx
-                    self.rect.y += self.dash_dy
+                    self.rect.x += self.dash_dx * _dt
+                    self.rect.y += self.dash_dy * _dt
                     self.dash_duration -= _dt
                     self.dash_invincible = True
-                    if self.dash_duration == 0:
+                    if self.dash_duration <= 0:
+                        self.dash_duration = 0
                         self.dash_invincible = False
             else:
-                self.rect.x += self.dash_dx
-                self.rect.y += self.dash_dy
+                self.rect.x += self.dash_dx * _dt
+                self.rect.y += self.dash_dy * _dt
                 self.dash_duration -= _dt
                 self.dash_invincible = True
-                if self.dash_duration == 0:
+                if self.dash_duration <= 0:
+                    self.dash_duration = 0
                     self.dash_invincible = False
         else:
             self.dash_invincible = False
             if use_mouse:
-                self.rect.x += int(move_dx * speed)
-                self.rect.y += int(move_dy * speed)
+                self.rect.x += int(move_dx * speed * _dt)
+                self.rect.y += int(move_dy * speed * _dt)
             else:
-                self.rect.x += move_dx * speed
-                self.rect.y += move_dy * speed
+                self.rect.x += move_dx * speed * _dt
+                self.rect.y += move_dy * speed * _dt
 
         # Cooldown tick (dt-aware)
         _dt = settings_module.get_dt() if hasattr(settings_module, 'get_dt') else 1.0

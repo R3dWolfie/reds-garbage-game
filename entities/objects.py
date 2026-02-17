@@ -3,22 +3,38 @@ import pygame
 import math
 import random
 from core.settings import *
+from core.settings import get_dt
 from core.sprite_loader import load_sprite
+
+
+_bullet_cache = {}  # Cache: (size, color_tuple) -> Surface
+
+def _get_bullet_surface(size, color):
+    """Get or create a cached bullet surface."""
+    size = min(3.0, size)  # Hard cap
+    # Quantize size to reduce cache entries (round to 0.25)
+    qsize = round(size * 4) / 4
+    key = (qsize, color)
+    if key not in _bullet_cache:
+        bullet_size = int(10 * qsize)
+        total = bullet_size + 6
+        surf = pygame.Surface((total, total), pygame.SRCALPHA)
+        c = color or (255, 255, 0)
+        bright = (min(255, c[0]+80), min(255, c[1]+80), min(255, c[2]+80))
+        core_c = (min(255, c[0]+160), min(255, c[1]+160), min(255, c[2]+160))
+        pygame.draw.circle(surf, (*c, 40), (total // 2, total // 2), total // 2)
+        pygame.draw.circle(surf, bright, (total // 2, total // 2), bullet_size // 2)
+        pygame.draw.circle(surf, core_c, (total // 2, total // 2), max(1, bullet_size // 4))
+        _bullet_cache[key] = surf
+    return _bullet_cache[key]
 
 
 class Bullet(pygame.sprite.Sprite):
     def __init__(self, start_pos, target_pos, speed, piercing=1, size=1.0, bounces=0, color=None):
         super().__init__()
-        bullet_size = int(10 * size)
-        total = bullet_size + 6
-        self.image = pygame.Surface((total, total), pygame.SRCALPHA)
-        # Use class-specific color or default yellow
+        size = min(3.0, size)  # Hard cap
         c = color or (255, 255, 0)
-        bright = (min(255, c[0]+80), min(255, c[1]+80), min(255, c[2]+80))
-        core = (min(255, c[0]+160), min(255, c[1]+160), min(255, c[2]+160))
-        pygame.draw.circle(self.image, (*c, 40), (total // 2, total // 2), total // 2)
-        pygame.draw.circle(self.image, bright, (total // 2, total // 2), bullet_size // 2)
-        pygame.draw.circle(self.image, core, (total // 2, total // 2), max(1, bullet_size // 4))
+        self.image = _get_bullet_surface(size, c)
         self.rect = self.image.get_rect()
         self.rect.center = start_pos
 
@@ -36,8 +52,8 @@ class Bullet(pygame.sprite.Sprite):
         self.dy = (dy / dist) * speed
 
     def update(self):
-        self.rect.x += self.dx
-        self.rect.y += self.dy
+        self.rect.x += self.dx * get_dt()
+        self.rect.y += self.dy * get_dt()
         screen_rect = pygame.Rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT)
         if not screen_rect.colliderect(self.rect):
             if self.bounces_left > 0:
@@ -53,16 +69,20 @@ class Bullet(pygame.sprite.Sprite):
                 self.kill()
 
 
+_enemy_proj_surface = None
+
 class EnemyProjectile(pygame.sprite.Sprite):
     """Red projectile shot by Tank enemies toward players."""
 
     def __init__(self, start_pos, target_pos, speed=4):
         super().__init__()
-        # Neon red enemy projectile
-        self.image = pygame.Surface((14, 14), pygame.SRCALPHA)
-        pygame.draw.circle(self.image, (255, 30, 60, 40), (7, 7), 7)
-        pygame.draw.circle(self.image, (255, 50, 80), (7, 7), 5)
-        pygame.draw.circle(self.image, (255, 150, 170), (7, 7), 2)
+        global _enemy_proj_surface
+        if _enemy_proj_surface is None:
+            _enemy_proj_surface = pygame.Surface((14, 14), pygame.SRCALPHA)
+            pygame.draw.circle(_enemy_proj_surface, (255, 30, 60, 40), (7, 7), 7)
+            pygame.draw.circle(_enemy_proj_surface, (255, 50, 80), (7, 7), 5)
+            pygame.draw.circle(_enemy_proj_surface, (255, 150, 170), (7, 7), 2)
+        self.image = _enemy_proj_surface
         self.rect = self.image.get_rect()
         self.rect.center = start_pos
 
@@ -77,8 +97,9 @@ class EnemyProjectile(pygame.sprite.Sprite):
         self.dy = (dy / dist) * speed
 
     def update(self):
-        self.rect.x += self.dx
-        self.rect.y += self.dy
+        _d = get_dt()
+        self.rect.x += self.dx * _d
+        self.rect.y += self.dy * _d
         if not pygame.Rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT).colliderect(self.rect):
             self.kill()
 
@@ -124,8 +145,8 @@ class LaserBeam(pygame.sprite.Sprite):
         self.rect = self.image.get_rect(center=self.rect.center)
 
     def update(self):
-        self.rect.x += self.dx
-        self.rect.y += self.dy
+        self.rect.x += self.dx * get_dt()
+        self.rect.y += self.dy * get_dt()
         self.lifetime -= 1
         if self.lifetime <= 0:
             self.kill()
@@ -133,22 +154,45 @@ class LaserBeam(pygame.sprite.Sprite):
             self.kill()
 
 
-class ExpGem(pygame.sprite.Sprite):
-    def __init__(self, pos):
-        super().__init__()
-        # Neon XP gem with glow
-        self.image = pygame.Surface((16, 20), pygame.SRCALPHA)
-        # Outer glow
-        pygame.draw.ellipse(self.image, (0, 255, 255, 30), (0, 0, 16, 20))
-        # Diamond shape
+_gem_surface = None
+_mega_gem_surface = None
+
+def _get_gem_surface():
+    global _gem_surface
+    if _gem_surface is None:
+        _gem_surface = pygame.Surface((16, 20), pygame.SRCALPHA)
+        pygame.draw.ellipse(_gem_surface, (0, 255, 255, 30), (0, 0, 16, 20))
         points = [(8, 1), (14, 10), (8, 19), (2, 10)]
-        pygame.draw.polygon(self.image, (0, 220, 255), points)
-        pygame.draw.polygon(self.image, (150, 255, 255), points, 1)
-        # Bright center
-        pygame.draw.polygon(self.image, (200, 255, 255), [(8, 5), (11, 10), (8, 15), (5, 10)])
+        pygame.draw.polygon(_gem_surface, (0, 220, 255), points)
+        pygame.draw.polygon(_gem_surface, (150, 255, 255), points, 1)
+        pygame.draw.polygon(_gem_surface, (200, 255, 255), [(8, 5), (11, 10), (8, 15), (5, 10)])
+    return _gem_surface
+
+def _get_mega_gem_surface():
+    global _mega_gem_surface
+    if _mega_gem_surface is None:
+        _mega_gem_surface = pygame.Surface((24, 30), pygame.SRCALPHA)
+        pygame.draw.ellipse(_mega_gem_surface, (255, 50, 50, 40), (0, 0, 24, 30))
+        points = [(12, 1), (22, 15), (12, 29), (2, 15)]
+        pygame.draw.polygon(_mega_gem_surface, (255, 60, 60), points)
+        pygame.draw.polygon(_mega_gem_surface, (255, 150, 150), points, 2)
+        pygame.draw.polygon(_mega_gem_surface, (255, 200, 200), [(12, 7), (17, 15), (12, 23), (7, 15)])
+    return _mega_gem_surface
+
+
+class ExpGem(pygame.sprite.Sprite):
+    def __init__(self, pos, xp_value=1):
+        super().__init__()
+        self.xp_value = xp_value
+        if xp_value >= 5:
+            self.image = _get_mega_gem_surface()
+        else:
+            self.image = _get_gem_surface()
         self.rect = self.image.get_rect()
         self.rect.center = pos
-        self.speed = 0  # For magnet pull
+        self.speed = 0
+        self.spawn_time = pygame.time.get_ticks()
+        self._alpha = 255
 
     def move_toward(self, target_pos, pull_speed):
         """Move toward a target (for magnet effect)."""
@@ -156,44 +200,81 @@ class ExpGem(pygame.sprite.Sprite):
         dy = target_pos[1] - self.rect.centery
         dist = math.hypot(dx, dy)
         if dist > 0 and dist < 5:
-            # Close enough, snap
+            self.rect.center = target_pos
+        elif dist > 0:
+            self.rect.x += (dx / dist) * pull_speed
+            self.rect.y += (dy / dist) * pull_speed
+
+    def update(self):
+        """Fade and despawn after 15 seconds."""
+        age_ms = pygame.time.get_ticks() - self.spawn_time
+        if age_ms > 13000:  # Start fading at 13s
+            fade_ratio = max(0, 1.0 - (age_ms - 13000) / 2000.0)
+            self._alpha = int(255 * fade_ratio)
+            if self._alpha <= 0:
+                self.kill()
+                return
+            # Only create new surface if alpha changed significantly
+            if self.xp_value >= 5:
+                base = _get_mega_gem_surface()
+            else:
+                base = _get_gem_surface()
+            if self._alpha < 250:
+                faded = base.copy()
+                faded.set_alpha(self._alpha)
+                self.image = faded
+
+
+_health_orb_surface = None
+
+class HealthOrb(pygame.sprite.Sprite):
+    def __init__(self, pos):
+        super().__init__()
+        global _health_orb_surface
+        if _health_orb_surface is None:
+            _health_orb_surface = pygame.Surface((18, 18), pygame.SRCALPHA)
+            pygame.draw.circle(_health_orb_surface, (255, 100, 200, 30), (9, 9), 9)
+            pygame.draw.circle(_health_orb_surface, (255, 80, 180), (9, 9), 6)
+            pygame.draw.circle(_health_orb_surface, (255, 200, 230), (9, 9), 3)
+            pygame.draw.line(_health_orb_surface, WHITE, (7, 9), (11, 9), 2)
+            pygame.draw.line(_health_orb_surface, WHITE, (9, 7), (9, 11), 2)
+        self.image = _health_orb_surface
+        self.rect = self.image.get_rect()
+        self.rect.center = pos
+        self.heal_amount = HEALTH_ORB_HEAL
+        self.spawn_time = pygame.time.get_ticks()
+
+    def move_toward(self, target_pos, pull_speed):
+        dx = target_pos[0] - self.rect.centerx
+        dy = target_pos[1] - self.rect.centery
+        dist = math.hypot(dx, dy)
+        if dist > 0 and dist < 5:
             self.rect.center = target_pos
         elif dist > 0:
             self.rect.x += (dx / dist) * pull_speed
             self.rect.y += (dy / dist) * pull_speed
 
 
-class HealthOrb(pygame.sprite.Sprite):
-    def __init__(self, pos):
-        super().__init__()
-        # Neon health orb
-        self.image = pygame.Surface((18, 18), pygame.SRCALPHA)
-        pygame.draw.circle(self.image, (255, 100, 200, 30), (9, 9), 9)
-        pygame.draw.circle(self.image, (255, 80, 180), (9, 9), 6)
-        pygame.draw.circle(self.image, (255, 200, 230), (9, 9), 3)
-        # Cross symbol
-        pygame.draw.line(self.image, WHITE, (7, 9), (11, 9), 2)
-        pygame.draw.line(self.image, WHITE, (9, 7), (9, 11), 2)
-        self.rect = self.image.get_rect()
-        self.rect.center = pos
-        self.heal_amount = HEALTH_ORB_HEAL
-
+_gold_coin_surface = None
 
 class GoldCoin(pygame.sprite.Sprite):
     """Gold coin that drops from enemies - used for permanent shop upgrades."""
 
     def __init__(self, pos, value=1):
         super().__init__()
-        # Neon gold coin
-        self.image = pygame.Surface((18, 18), pygame.SRCALPHA)
-        pygame.draw.circle(self.image, (255, 215, 0, 30), (9, 9), 9)
-        pygame.draw.circle(self.image, (255, 200, 0), (9, 9), 7)
-        pygame.draw.circle(self.image, (255, 240, 100), (9, 9), 4)
-        pygame.draw.circle(self.image, (255, 215, 0), (9, 9), 7, 2)
+        global _gold_coin_surface
+        if _gold_coin_surface is None:
+            _gold_coin_surface = pygame.Surface((18, 18), pygame.SRCALPHA)
+            pygame.draw.circle(_gold_coin_surface, (255, 215, 0, 30), (9, 9), 9)
+            pygame.draw.circle(_gold_coin_surface, (255, 200, 0), (9, 9), 7)
+            pygame.draw.circle(_gold_coin_surface, (255, 240, 100), (9, 9), 4)
+            pygame.draw.circle(_gold_coin_surface, (255, 215, 0), (9, 9), 7, 2)
+        self.image = _gold_coin_surface
         self.rect = self.image.get_rect()
         self.rect.center = pos
         self.value = value
         self.speed = 0
+        self.spawn_time = pygame.time.get_ticks()
 
     def move_toward(self, target_pos, pull_speed):
         """Move toward a target (for magnet effect)."""
@@ -201,7 +282,6 @@ class GoldCoin(pygame.sprite.Sprite):
         dy = target_pos[1] - self.rect.centery
         dist = math.hypot(dx, dy)
         if dist > 0 and dist < 5:
-            # Close enough, snap
             self.rect.center = target_pos
         elif dist > 0:
             self.rect.x += (dx / dist) * pull_speed

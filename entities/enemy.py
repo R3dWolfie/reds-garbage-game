@@ -1,6 +1,7 @@
 # enemy.py
 import pygame, random, math
 from core.settings import *
+from core.settings import get_dt
 from core.sprite_loader import load_sprite, make_neon_sprite
 
 class Enemy(pygame.sprite.Sprite):
@@ -11,6 +12,13 @@ class Enemy(pygame.sprite.Sprite):
         self.rect = self.image.get_rect()
         self.max_health = 1+(wave//3); self.health = self.max_health
         self.speed = 2+(wave*0.1); self.damage = 10; self._spawn_at_edge()
+    @property
+    def _dt(self):
+        return get_dt()
+    @property
+    def spd(self):
+        """Speed scaled by delta time."""
+        return self.speed * get_dt()
     def _spawn_at_edge(self):
         sw,sh=SCREEN_WIDTH,SCREEN_HEIGHT; s=random.choice([0,1,2,3])
         if s==0: self.rect.x=random.randint(0,sw); self.rect.y=-40
@@ -36,7 +44,7 @@ class Enemy(pygame.sprite.Sprite):
     def update(self):
         tx,ty=self._get_target(); dx=tx-self.rect.centerx; dy=ty-self.rect.centery
         d=math.hypot(dx,dy)
-        if d!=0: self.rect.x+=dx/d*self.speed; self.rect.y+=dy/d*self.speed
+        if d!=0: self.rect.x+=dx/d*self.spd; self.rect.y+=dy/d*self.spd
 
 class ArrowEnemy(Enemy):
     def __init__(self, player, wave):
@@ -54,9 +62,9 @@ class ArrowEnemy(Enemy):
         a=math.degrees(math.atan2(-self.velocity_y,self.velocity_x)); oc=self.rect.center
         self.image=pygame.transform.rotate(self.base_image,a); self.rect=self.image.get_rect(center=oc)
     def update(self):
-        sw,sh=SCREEN_WIDTH,SCREEN_HEIGHT
+        sw,sh=SCREEN_WIDTH,SCREEN_HEIGHT; _d=self._dt
         if self.bounces_left>0:
-            self.rect.x+=self.velocity_x; self.rect.y+=self.velocity_y; b=False
+            self.rect.x+=self.velocity_x*_d; self.rect.y+=self.velocity_y*_d; b=False
             if self.rect.left<=0: self.rect.left=0; self.velocity_x=abs(self.velocity_x); b=True
             elif self.rect.right>=sw: self.rect.right=sw; self.velocity_x=-abs(self.velocity_x); b=True
             if self.rect.top<=0: self.rect.top=0; self.velocity_y=abs(self.velocity_y); b=True
@@ -66,7 +74,7 @@ class ArrowEnemy(Enemy):
             tx,ty=self._get_target(); dx=tx-self.rect.centerx; dy=ty-self.rect.centery; d=math.hypot(dx,dy)
             if d!=0:
                 self.velocity_x=(dx/d)*self.speed; self.velocity_y=(dy/d)*self.speed
-                self._update_rotation(); self.rect.x+=self.velocity_x; self.rect.y+=self.velocity_y
+                self._update_rotation(); self.rect.x+=self.velocity_x*_d; self.rect.y+=self.velocity_y*_d
 
 class TankEnemy(Enemy):
     def __init__(self, player, wave):
@@ -77,7 +85,7 @@ class TankEnemy(Enemy):
         self.speed=1+(wave*0.02); self.damage=5; self.shoot_cooldown=0; self.shoot_delay=90
     def update(self):
         super().update()
-        if self.shoot_cooldown>0: self.shoot_cooldown-=1
+        if self.shoot_cooldown>0: self.shoot_cooldown-=self._dt
     def can_shoot(self): return self.shoot_cooldown==0
     def shoot(self,tx=0,ty=0): self.shoot_cooldown=self.shoot_delay; return True
     def get_xp_drop_count(self): return max(3,3+self.max_health//10)
@@ -105,8 +113,8 @@ class ZigZagEnemy(Enemy):
         if d!=0:
             dx,dy=dx/d,dy/d; self.zz_t+=1
             if self.zz_t>=30: self.zz_t=0; self.zz_d*=-1
-            self.rect.x+=(dx+(-dy)*self.zz_d*0.5)*self.speed
-            self.rect.y+=(dy+(dx)*self.zz_d*0.5)*self.speed
+            self.rect.x+=(dx+(-dy)*self.zz_d*0.5)*self.spd
+            self.rect.y+=(dy+(dx)*self.zz_d*0.5)*self.spd
 
 class TeleportEnemy(Enemy):
     def __init__(self, player, wave):
@@ -118,7 +126,7 @@ class TeleportEnemy(Enemy):
         self.max_health=20+wave; self.health=self.max_health; self.speed=2; self.damage=15
         self.tp_timer=random.randint(60,120)
     def update(self):
-        self.tp_timer-=1
+        self.tp_timer-=self._dt
         if self.tp_timer<=0:
             tx,ty=self._get_target()
             self.rect.centerx=tx+random.randint(-120,120); self.rect.centery=ty+random.randint(-120,120)
@@ -143,7 +151,7 @@ class ShieldEnemy(Enemy):
         return False
     def update(self):
         super().update()
-        if self.shield_regen_timer>0: self.shield_regen_timer-=1
+        if self.shield_regen_timer>0: self.shield_regen_timer-=self._dt
         elif self.shield_hp<self.shield_max: self.shield_hp=min(self.shield_max,self.shield_hp+0.3)
     def draw_health_bar(self, surf):
         super().draw_health_bar(surf)
@@ -165,8 +173,8 @@ class SwarmEnemy(Enemy):
         tx,ty=self._get_target(); dx=tx-self.rect.centerx; dy=ty-self.rect.centery; d=math.hypot(dx,dy)
         if d!=0:
             dx,dy=dx/d,dy/d; self.wob+=0.15
-            self.rect.x+=dx*self.speed+math.sin(self.wob+self.off_a)*1.5
-            self.rect.y+=dy*self.speed+math.cos(self.wob+self.off_a)*1.5
+            self.rect.x+=dx*self.spd+math.sin(self.wob+self.off_a)*1.5
+            self.rect.y+=dy*self.spd+math.cos(self.wob+self.off_a)*1.5
     def get_xp_drop_count(self): return 1
 
 class VortexEnemy(Enemy):
@@ -193,7 +201,7 @@ class NecroEnemy(Enemy):
         self.max_health=80+wave*2; self.health=self.max_health; self.speed=1.2+wave*0.03; self.damage=10
         self.summon_timer=180; self.summon_delay=max(90,180-wave*2)
     def update(self):
-        super().update(); self.summon_timer-=1
+        super().update(); self.summon_timer-=self._dt
     def can_summon(self):
         if self.summon_timer<=0: self.summon_timer=self.summon_delay; return True
         return False
@@ -230,9 +238,9 @@ class SpiralEnemy(Enemy):
         dx = goal_x - self.rect.centerx; dy = goal_y - self.rect.centery
         d = math.hypot(dx, dy)
         if d > 0:
-            self.rect.x += (dx / d) * self.speed
-            self.rect.y += (dy / d) * self.speed
-        self.shoot_timer -= 1
+            self.rect.x += (dx / d) * self.spd
+            self.rect.y += (dy / d) * self.spd
+        self.shoot_timer -= self._dt
 
     def can_shoot(self):
         if self.shoot_timer <= 0:
@@ -268,16 +276,16 @@ class MineLayerEnemy(Enemy):
         dx = self.rect.centerx - tx; dy = self.rect.centery - ty
         d = math.hypot(dx, dy)
         if d > 0 and d < 250:
-            self.rect.x += (dx / d) * self.speed
-            self.rect.y += (dy / d) * self.speed
+            self.rect.x += (dx / d) * self.spd
+            self.rect.y += (dy / d) * self.spd
         elif d >= 250:
             # Strafe perpendicular when far enough
             perp_x = -dy / d; perp_y = dx / d
-            self.rect.x += perp_x * self.speed * 0.7
-            self.rect.y += perp_y * self.speed * 0.7
+            self.rect.x += perp_x * self.spd * 0.7
+            self.rect.y += perp_y * self.spd * 0.7
         # Keep on screen
         self.rect.clamp_ip(pygame.Rect(10, 10, SCREEN_WIDTH - 20, SCREEN_HEIGHT - 20))
-        self.mine_timer -= 1
+        self.mine_timer -= self._dt
 
     def can_lay_mine(self):
         if self.mine_timer <= 0 and self.mines_laid < self.max_mines:
@@ -302,7 +310,7 @@ class ProximityMine(pygame.sprite.Sprite):
 
     def update(self):
         if self.arm_timer > 0:
-            self.arm_timer -= 1
+            self.arm_timer -= self._dt
             # Blink while arming
             if self.arm_timer % 10 < 5:
                 self.image.set_alpha(100)
@@ -350,30 +358,30 @@ class LaserDrone(Enemy):
                 self.charge_timer = self.charge_time
                 self.beam_target = (tx, ty)
             elif d > 0:
-                self.rect.x += (dx / d) * self.speed
-                self.rect.y += (dy / d) * self.speed
+                self.rect.x += (dx / d) * self.spd
+                self.rect.y += (dy / d) * self.spd
 
         elif self.state == "charging":
-            self.charge_timer -= 1
+            self.charge_timer -= self._dt
             self.beam_target = (tx, ty)  # Track during charge
             if self.charge_timer <= 0:
                 self.state = "firing"
                 self.fire_timer = self.fire_time
 
         elif self.state == "firing":
-            self.fire_timer -= 1
+            self.fire_timer -= self._dt
             if self.fire_timer <= 0:
                 self.state = "cooldown"
                 self.cooldown_timer = self.cooldown_time
 
         elif self.state == "cooldown":
-            self.cooldown_timer -= 1
+            self.cooldown_timer -= self._dt
             # Drift slowly
             dx = tx - self.rect.centerx; dy = ty - self.rect.centery
             d = math.hypot(dx, dy)
             if d > 0:
-                self.rect.x += (dx / d) * self.speed * 0.3
-                self.rect.y += (dy / d) * self.speed * 0.3
+                self.rect.x += (dx / d) * self.spd * 0.3
+                self.rect.y += (dy / d) * self.spd * 0.3
             if self.cooldown_timer <= 0:
                 self.state = "moving"
 
@@ -409,7 +417,7 @@ class LeechPriest(Enemy):
         # Move toward the closest non-leech enemy
         tx, ty = self._get_target()  # fallback
         super().update()
-        self.heal_timer -= 1
+        self.heal_timer -= self._dt
 
     def can_heal(self):
         if self.heal_timer <= 0:
@@ -450,7 +458,7 @@ class PhaseWraith(Enemy):
         return super().take_damage(amount)
 
     def update(self):
-        self.phase_timer -= 1
+        self.phase_timer -= self._dt
         if self.phased_out:
             if self.phase_timer <= 0:
                 self.phased_out = False
@@ -465,7 +473,7 @@ class PhaseWraith(Enemy):
         tx, ty = self._get_target()
         dx = tx - self.rect.centerx; dy = ty - self.rect.centery
         d = math.hypot(dx, dy)
-        spd = self.speed * (1.5 if self.phased_out else 1.0)
+        spd = self.speed * (1.5 if self.phased_out else 1.0) * self._dt
         if d > 0:
             self.rect.x += (dx / d) * spd
             self.rect.y += (dy / d) * spd
@@ -508,14 +516,14 @@ class ChargerBull(Enemy):
             dx = tx - self.rect.centerx; dy = ty - self.rect.centery
             d = math.hypot(dx, dy)
             if d > 0:
-                self.rect.x += (dx/d) * self.speed
-                self.rect.y += (dy/d) * self.speed
+                self.rect.x += (dx/d) * self.spd
+                self.rect.y += (dy/d) * self.spd
             if d < 250:
                 self.state = "telegraph"
                 self.telegraph_timer = self.telegraph_time
                 self.telegraph_target = (tx, ty)
         elif self.state == "telegraph":
-            self.telegraph_timer -= 1
+            self.telegraph_timer -= self._dt
             self.telegraph_target = (tx, ty)  # Track during telegraph
             if self.telegraph_timer <= 0:
                 dx = self.telegraph_target[0] - self.rect.centerx
@@ -527,12 +535,12 @@ class ChargerBull(Enemy):
         elif self.state == "charging":
             self.rect.x += self.charge_dir[0] * self.charge_speed
             self.rect.y += self.charge_dir[1] * self.charge_speed
-            self.charge_timer -= 1
+            self.charge_timer -= self._dt
             if self.charge_timer <= 0:
                 self.state = "stunned"
                 self.stun_timer = self.stun_time
         elif self.state == "stunned":
-            self.stun_timer -= 1
+            self.stun_timer -= self._dt
             if self.stun_timer <= 0:
                 self.state = "stalking"
 
@@ -681,18 +689,18 @@ class SniperEnemy(Enemy):
         if d > 0:
             if d < self.preferred_dist - 50:
                 # Too close — retreat
-                self.rect.x -= (dx / d) * self.speed * 1.5
-                self.rect.y -= (dy / d) * self.speed * 1.5
+                self.rect.x -= (dx / d) * self.spd * 1.5
+                self.rect.y -= (dy / d) * self.spd * 1.5
             elif d > self.preferred_dist + 100:
                 # Too far — approach
-                self.rect.x += (dx / d) * self.speed
-                self.rect.y += (dy / d) * self.speed
+                self.rect.x += (dx / d) * self.spd
+                self.rect.y += (dy / d) * self.spd
             else:
                 # Strafe perpendicular
-                self.rect.x += (-dy / d) * self.speed * 0.5
-                self.rect.y += (dx / d) * self.speed * 0.5
+                self.rect.x += (-dy / d) * self.spd * 0.5
+                self.rect.y += (dx / d) * self.spd * 0.5
         self.rect.clamp_ip(pygame.Rect(5, 5, SCREEN_WIDTH-10, SCREEN_HEIGHT-10))
-        self.shoot_timer -= 1
+        self.shoot_timer -= self._dt
 
     def can_shoot(self):
         if self.shoot_timer <= 0:
@@ -781,8 +789,8 @@ class ParasiteEnemy(Enemy):
         dx = tx - self.rect.centerx; dy = ty - self.rect.centery
         d = math.hypot(dx, dy)
         if d > 0:
-            self.rect.x += (dx / d) * self.speed
-            self.rect.y += (dy / d) * self.speed
+            self.rect.x += (dx / d) * self.spd
+            self.rect.y += (dy / d) * self.spd
 
     def get_xp_drop_count(self): return 1
 
@@ -804,7 +812,7 @@ class BossMinion(Enemy):
         self.shoot_cooldown=0; self.shoot_delay=max(50,100-wave)
     def update(self):
         super().update()
-        if self.shoot_cooldown>0: self.shoot_cooldown-=1
+        if self.shoot_cooldown>0: self.shoot_cooldown-=self._dt
     def can_shoot(self):
         if self.shoot_cooldown<=0: self.shoot_cooldown=self.shoot_delay; return True
         return False
@@ -844,7 +852,7 @@ class PhantomWisp(Enemy):
         self.shoot_cooldown=0; self.shoot_delay=max(60,120-wave)
     def update(self):
         super().update()
-        self.tp_timer-=1; self.shoot_cooldown-=1
+        self.tp_timer-=self._dt; self.shoot_cooldown-=self._dt
         if self.tp_timer<=0:
             tx,ty=self._get_target()
             self.rect.centerx=tx+random.randint(-120,120)
@@ -933,7 +941,7 @@ class InfernoImp(Enemy):
         self.shoot_cooldown=0; self.shoot_delay=max(40,80-wave)
     def update(self):
         super().update()
-        if self.shoot_cooldown>0: self.shoot_cooldown-=1
+        if self.shoot_cooldown>0: self.shoot_cooldown-=self._dt
     def can_shoot(self):
         if self.shoot_cooldown<=0: self.shoot_cooldown=self.shoot_delay; return True
         return False
@@ -979,9 +987,9 @@ class ShadowShade(Enemy):
     def update(self):
         tx,ty=self._get_target()
         dx=tx-self.rect.centerx; dy=ty-self.rect.centery; d=math.hypot(dx,dy)
-        spd=self.speed*(1.3 if not self.visible else 1.0)
+        spd=self.speed*(1.3 if not self.visible else 1.0)*self._dt
         if d>0: self.rect.x+=(dx/d)*spd; self.rect.y+=(dy/d)*spd
-        self.vis_timer-=1
+        self.vis_timer-=self._dt
         if self.visible:
             if self.vis_timer<=0: self.visible=False; self.vis_timer=self.invis_time; self.image=self.ghost_image
         else:
@@ -1006,7 +1014,7 @@ class OmegaDrone(Enemy):
         self.shoot_cooldown=0; self.shoot_delay=max(40,80-wave)
     def update(self):
         super().update()
-        if self.shoot_cooldown>0: self.shoot_cooldown-=1
+        if self.shoot_cooldown>0: self.shoot_cooldown-=self._dt
     def can_shoot(self):
         if self.shoot_cooldown<=0: self.shoot_cooldown=self.shoot_delay; return True
         return False
@@ -1028,11 +1036,13 @@ class Boss(Enemy):
         super().__init__(player,wave); self.is_boss=True
         self.image=_make_boss_sprite((80,80),PURPLE,(180,0,255),6)
         self.rect=self.image.get_rect(); self._spawn_at_edge()
-        self.max_health=20+(wave*5); self.health=self.max_health
-        self.speed=1.5+(wave*0.05); self.damage=25; self.shoot_cooldown=0; self.shoot_delay=60
+        _tier = wave // 10
+        base_hp = 80 + (wave * 12)  # Much more HP
+        self.max_health = int(base_hp * (1.0 + _tier * 0.8)); self.health=self.max_health
+        self.speed=1.5+(wave*0.05); self.damage=int(35 * (1.0 + _tier * 0.4)); self.shoot_cooldown=0; self.shoot_delay=50
     def update(self):
         super().update()
-        if self.shoot_cooldown>0: self.shoot_cooldown-=1
+        if self.shoot_cooldown>0: self.shoot_cooldown-=self._dt
     def can_shoot(self): return self.shoot_cooldown==0
     def shoot(self,tx=0,ty=0): self.shoot_cooldown=self.shoot_delay; return True
     def get_xp_drop_count(self): return max(10,10+self.max_health//5)
@@ -1048,7 +1058,7 @@ class HydraBoss(Boss):
         super().__init__(player,wave)
         self.image=_make_boss_sprite((90,90),(0,180,80),(57,255,20),7)
         self.rect=self.image.get_rect(); self._spawn_at_edge()
-        self.max_health=300+wave*8; self.health=self.max_health; self.speed=1.8; self.damage=20; self.shoot_delay=80
+        self.max_health=900+wave*24; self.health=self.max_health; self.speed=1.8; self.damage=30; self.shoot_delay=80
         self.is_hydra_parent=True
 
 class HydraMini(Boss):
@@ -1056,7 +1066,7 @@ class HydraMini(Boss):
         super().__init__(player,wave)
         self.image=_make_boss_sprite((50,50),(0,200,100),(100,255,120),4)
         self.rect=self.image.get_rect(); self.rect.center=pos
-        self.max_health=120+wave*3; self.health=self.max_health; self.speed=2.5; self.damage=15; self.shoot_delay=60
+        self.max_health=360+wave*9; self.health=self.max_health; self.speed=2.5; self.damage=15; self.shoot_delay=60
         self.is_hydra_parent=False
 
 class PhantomBoss(Boss):
@@ -1064,10 +1074,10 @@ class PhantomBoss(Boss):
         super().__init__(player,wave)
         self.image=_make_boss_sprite((85,85),(120,50,200),(200,100,255),7)
         self.rect=self.image.get_rect(); self._spawn_at_edge()
-        self.max_health=500+wave*10; self.health=self.max_health; self.speed=1.0; self.damage=22; self.shoot_delay=45
+        self.max_health=1500+wave*30; self.health=self.max_health; self.speed=1.0; self.damage=33; self.shoot_delay=45
         self.tp_timer=120; self.spread_count=5
     def update(self):
-        super().update(); self.tp_timer-=1
+        super().update(); self.tp_timer-=self._dt
         if self.tp_timer<=0:
             tx,ty=self._get_target()
             self.rect.centerx=tx+random.randint(-200,200); self.rect.centery=ty+random.randint(-200,200)
@@ -1078,7 +1088,7 @@ class FortressBoss(Boss):
         super().__init__(player,wave)
         self.image=_make_boss_sprite((100,100),(100,100,140),(150,150,220),8)
         self.rect=self.image.get_rect(); self._spawn_at_edge()
-        self.max_health=1000+wave*15; self.health=self.max_health; self.speed=0.6; self.damage=30; self.shoot_delay=50
+        self.max_health=3000+wave*45; self.health=self.max_health; self.speed=0.6; self.damage=45; self.shoot_delay=50
         self.spawn_timer=180; self.spawn_delay=150
     def update(self): super().update(); self.spawn_timer-=1
     def can_spawn_minion(self):
@@ -1090,7 +1100,7 @@ class StormBoss(Boss):
         super().__init__(player,wave)
         self.image=_make_boss_sprite((85,85),(50,150,255),(0,200,255),7)
         self.rect=self.image.get_rect(); self._spawn_at_edge()
-        self.max_health=800+wave*12; self.health=self.max_health; self.speed=2.5; self.damage=25; self.shoot_delay=30
+        self.max_health=2400+wave*36; self.health=self.max_health; self.speed=2.5; self.damage=38; self.shoot_delay=30
         self.ring_timer=0; self.ring_delay=120; self.ring_count=12
     def update(self): super().update(); self.ring_timer-=1
     def can_ring(self):
@@ -1102,7 +1112,7 @@ class VoidBoss(Boss):
         super().__init__(player,wave)
         self.image=_make_boss_sprite((95,95),(40,0,60),(120,0,200),8)
         self.rect=self.image.get_rect(); self._spawn_at_edge()
-        self.max_health=1200+wave*15; self.health=self.max_health; self.speed=1.0; self.damage=30
+        self.max_health=3600+wave*45; self.health=self.max_health; self.speed=1.0; self.damage=45
         self.pull_strength=3.0; self.pull_radius=300; self.shoot_delay=40
         self.ring_timer=0; self.ring_delay=90; self.ring_count=16
     def update(self): super().update(); self.ring_timer-=1
@@ -1115,7 +1125,7 @@ class InfernoBoss(Boss):
         super().__init__(player,wave)
         self.image=_make_boss_sprite((85,85),(200,60,0),(255,100,0),7)
         self.rect=self.image.get_rect(); self._spawn_at_edge()
-        self.max_health=1500+wave*18; self.health=self.max_health; self.speed=2.0; self.damage=25; self.shoot_delay=15
+        self.max_health=4500+wave*54; self.health=self.max_health; self.speed=2.0; self.damage=38; self.shoot_delay=15
         self.trail_timer=0
     def update(self): super().update(); self.trail_timer+=1
 
@@ -1124,7 +1134,7 @@ class FrostBoss(Boss):
         super().__init__(player,wave)
         self.image=_make_boss_sprite((90,90),(100,180,255),(150,220,255),7)
         self.rect=self.image.get_rect(); self._spawn_at_edge()
-        self.max_health=1800+wave*20; self.health=self.max_health; self.speed=1.2; self.damage=22; self.shoot_delay=35
+        self.max_health=5400+wave*60; self.health=self.max_health; self.speed=1.2; self.damage=33; self.shoot_delay=35
         self.slow_radius=250; self.slow_factor=0.5; self.spread_count=8
         self.ring_timer=0; self.ring_delay=100; self.ring_count=10
     def update(self): super().update(); self.ring_timer-=1
@@ -1159,11 +1169,11 @@ class OmegaBoss(Boss):
         pygame.draw.circle(img,(0,0,0),(cx-6,cy-3),4); pygame.draw.circle(img,(0,0,0),(cx+6,cy-3),4)
         self.image=make_neon_sprite(img,(255,200,255),glow_size=10)
         self.rect=self.image.get_rect(); self._spawn_at_edge()
-        self.max_health=5000+wave*30; self.health=self.max_health; self.speed=1.8; self.damage=40; self.shoot_delay=20
+        self.max_health=15000+wave*90; self.health=self.max_health; self.speed=1.8; self.damage=60; self.shoot_delay=20
         self.tp_timer=200; self.ring_timer=0; self.ring_delay=60; self.ring_count=20
         self.spawn_timer=250; self.spawn_delay=200; self.pull_strength=2.0; self.pull_radius=350
     def update(self):
-        super().update(); self.tp_timer-=1; self.ring_timer-=1; self.spawn_timer-=1
+        super().update(); self.tp_timer-=self._dt; self.ring_timer-=1; self.spawn_timer-=1
         if self.tp_timer<=0:
             tx,ty=self._get_target()
             self.rect.centerx=tx+random.randint(-250,250); self.rect.centery=ty+random.randint(-250,250)
