@@ -56,7 +56,50 @@ _OLD_DEFAULTS = {
     "fullscreen": False,
 }
 
-CONFIG_FILE = "config.json"
+def _get_config_path():
+    """Get a writable config file path.
+    On macOS/Linux: ~/.config/RedsGarbageGame/config.json
+    On Windows: next to the executable (or AppData as fallback)
+    When running from source: config.json in project root
+    """
+    import platform
+
+    # Running from source — use project root
+    if not getattr(sys, 'frozen', False):
+        return "config.json"
+
+    # Frozen/bundled app
+    if platform.system() == "Darwin":
+        # macOS: /Applications is not writable, use user config dir
+        config_dir = os.path.join(os.path.expanduser("~"), ".config", "RedsGarbageGame")
+    elif platform.system() == "Windows":
+        # Windows: try next to exe first
+        exe_dir = os.path.dirname(sys.executable)
+        test_path = os.path.join(exe_dir, "config.json")
+        try:
+            # Test if writable
+            with open(test_path, "a"):
+                pass
+            return test_path
+        except PermissionError:
+            config_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "RedsGarbageGame")
+    else:
+        # Linux: try next to exe first
+        exe_dir = os.path.dirname(sys.executable)
+        test_path = os.path.join(exe_dir, "config.json")
+        try:
+            with open(test_path, "a"):
+                pass
+            return test_path
+        except PermissionError:
+            config_dir = os.path.join(os.path.expanduser("~"), ".config", "RedsGarbageGame")
+
+    os.makedirs(config_dir, exist_ok=True)
+    return os.path.join(config_dir, "config.json")
+
+
+import sys
+CONFIG_FILE = _get_config_path()
 
 
 def load_config():

@@ -70,18 +70,37 @@ class DisplayManager:
         internal_w = settings_module.INTERNAL_WIDTH
         internal_h = settings_module.INTERNAL_HEIGHT
 
+        import platform
+        is_macos = platform.system() == "Darwin"
+
         if fullscreen:
-            # Fullscreen: use SCALED to auto-fit the monitor
-            flags = pygame.SCALED | pygame.FULLSCREEN
-            try:
-                self.screen = pygame.display.set_mode((internal_w, internal_h), flags)
-            except Exception:
+            if is_macos:
+                # macOS Retina: use pygame.SCALED for native GPU scaling
+                # This gives the sharpest result on HiDPI displays
+                flags = pygame.SCALED | pygame.FULLSCREEN
                 try:
-                    self.screen = pygame.display.set_mode((internal_w, internal_h), pygame.FULLSCREEN)
+                    self.screen = pygame.display.set_mode((internal_w, internal_h), flags)
                 except Exception:
-                    self.screen = pygame.display.set_mode((internal_w, internal_h))
-            self._windowed = False
-            self._render_surface = None
+                    self.screen = pygame.display.set_mode((internal_w, internal_h), pygame.FULLSCREEN)
+                self._windowed = False
+                self._render_surface = None
+            else:
+                # Windows/Linux: fullscreen at selected resolution with render scaling
+                try:
+                    self.screen = pygame.display.set_mode((display_w, display_h), pygame.FULLSCREEN)
+                except Exception:
+                    try:
+                        self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+                    except Exception:
+                        self.screen = pygame.display.set_mode((internal_w, internal_h))
+
+                actual_w, actual_h = self.screen.get_size()
+                if (actual_w, actual_h) != (internal_w, internal_h):
+                    self._windowed = True  # reuse the scaling path
+                    self._render_surface = pygame.Surface((internal_w, internal_h))
+                else:
+                    self._windowed = False
+                    self._render_surface = None
         else:
             # Windowed: create window at selected resolution
             flags = 0
