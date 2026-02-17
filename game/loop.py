@@ -875,6 +875,10 @@ def run_game(class_key, starting_wave=1):
             apply_magnet(player_obj, health_orbs_grp)  # Magnet picks up health orbs too
 
             # ---- AUTO-FIRE ----
+            # Always tick down cooldown first
+            if fire_cooldown > 0:
+                fire_cooldown -= dt
+
             if fire_cooldown <= 0 and not spectating and len(bullets_grp) < 500:
                 # Get the SINGLE nearest enemy
                 targets = get_nearest_enemies(player_obj, enemies_grp, 1)
@@ -1105,8 +1109,6 @@ def run_game(class_key, starting_wave=1):
 
                     fire_cooldown = player_obj.stats["fire_rate"]
                     sounds.play_shoot()
-            else:
-                fire_cooldown -= dt  # dt-based: framerate independent
 
             # ---- COLLISIONS ----
 

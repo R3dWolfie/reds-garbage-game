@@ -12,8 +12,8 @@
   "music_volume": 0.5,
   "username": "Red",
   "mouse_move": true,
-  "gold": 869,
-  "highest_wave": 13,
+  "gold": 1241,
+  "highest_wave": 20,
   "equipped_hat": "soulflame",
   "collected_hats": [
     "bunnyears",
@@ -55,7 +55,8 @@
     "halo",
     "viking",
     "toxicmask",
-    "thunderhelm"
+    "thunderhelm",
+    "samurai"
   ],
   "perma_upgrades": {
     "roomba_count": 2,
