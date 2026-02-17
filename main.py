@@ -92,11 +92,9 @@ def main():
     try:
         from updater.version import VERSION as RUNNING_VERSION
         import os
-        # Find where source files actually live
+        # Find version.py on disk to compare
         if getattr(sys, 'frozen', False):
             base = os.path.join(os.path.dirname(sys.executable), "_internal")
-            if not os.path.isdir(base):
-                base = os.path.dirname(sys.executable)
         else:
             base = os.path.dirname(os.path.abspath(__file__))
         version_file = os.path.join(base, "updater", "version.py")

@@ -25,14 +25,9 @@ STAGING_DIR_NAME = "_update_staging"
 
 
 def _get_install_dir():
-    """Get the directory where Python source files live."""
+    """Get the root install directory (where the .exe lives)."""
     if getattr(sys, 'frozen', False):
-        # PyInstaller puts Python files in _internal/ next to the .exe
-        exe_dir = os.path.dirname(sys.executable)
-        internal = os.path.join(exe_dir, "_internal")
-        if os.path.isdir(internal):
-            return internal
-        return exe_dir
+        return os.path.dirname(sys.executable)
     else:
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -235,19 +230,17 @@ def _apply_windows(install_dir, staging):
         launch_cmd = f'start "" "{python_exe}" "{main_py}"'
         exe_dir = install_dir
 
-    # Batch script: wait, xcopy, marker, relaunch, self-delete
+    # Batch script: kill process, wait, copy, marker, relaunch, self-delete
+    exe_name = os.path.basename(exe_path) if getattr(sys, 'frozen', False) else ""
     bat_content = f'''@echo off
 echo Applying update...
-:: Wait for the game process to fully exit
-timeout /t 2 /nobreak >nul
+
+:: Kill the game process to release file locks
+{'taskkill /f /im "' + exe_name + '" >nul 2>&1' if exe_name else ''}
+timeout /t 3 /nobreak >nul
 
 :: Copy all staged files over the install directory
 xcopy "{staging}\\*" "{install_dir}\\" /E /Y /Q >nul 2>&1
-if errorlevel 1 (
-    echo Update copy failed, retrying...
-    timeout /t 2 /nobreak >nul
-    xcopy "{staging}\\*" "{install_dir}\\" /E /Y /Q >nul 2>&1
-)
 
 :: Write success marker
 echo done > "{os.path.join(install_dir, '_update_done.marker')}"
