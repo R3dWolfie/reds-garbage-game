@@ -145,6 +145,7 @@ def get_max_monitor_resolution():
         return _max_monitor_res, _max_monitor_refresh
 
     import pygame
+    import platform
     try:
         # pygame.display.get_desktop_sizes() returns list of (w,h) for each display
         if hasattr(pygame.display, 'get_desktop_sizes'):
@@ -155,6 +156,16 @@ def get_max_monitor_resolution():
             # Fallback: pygame.display.Info()
             info = pygame.display.Info()
             _max_monitor_res = (info.current_w, info.current_h)
+
+        # macOS Retina: pygame reports "points" not pixels
+        # A 2560x1600 Retina display reports as 1440x900
+        # Multiply by 2 to get actual pixel resolution
+        if platform.system() == "Darwin":
+            w, h = _max_monitor_res
+            # Check if this looks like a scaled Retina resolution
+            # Most Mac displays are at least 1920px wide in actual pixels
+            if w <= 1440:
+                _max_monitor_res = (w * 2, h * 2)
     except Exception:
         _max_monitor_res = (1920, 1080)
 
@@ -180,14 +191,36 @@ def get_max_monitor_resolution():
 
 
 def get_available_resolutions():
-    """Return RESOLUTIONS filtered to only those <= the monitor's native res."""
+    """Return RESOLUTIONS filtered to only those <= the monitor's native res.
+    On macOS, includes Mac-specific resolutions."""
+    import platform
     max_res, _ = get_max_monitor_resolution()
     max_w, max_h = max_res
-    available = [r for r in RESOLUTIONS if r[0] <= max_w and r[1] <= max_h]
-    # Always include at least the internal resolution
-    if not available:
-        available = [(INTERNAL_WIDTH, INTERNAL_HEIGHT)]
-    return available
+
+    # Start with standard resolutions
+    all_res = list(RESOLUTIONS)
+
+    # On macOS, add Mac-specific resolutions
+    if platform.system() == "Darwin":
+        for r in MAC_RESOLUTIONS:
+            if r not in all_res:
+                all_res.append(r)
+
+    # Filter to monitor size and sort
+    available = [r for r in all_res if r[0] <= max_w and r[1] <= max_h]
+    available.sort(key=lambda r: (r[0], r[1]))
+
+    # Remove duplicates
+    seen = set()
+    unique = []
+    for r in available:
+        if r not in seen:
+            seen.add(r)
+            unique.append(r)
+
+    if not unique:
+        unique = [(INTERNAL_WIDTH, INTERNAL_HEIGHT)]
+    return unique
 
 
 def get_available_fps_options():
@@ -208,6 +241,27 @@ RESOLUTIONS = [
     (1920, 1080),
     (2560, 1440),
     (3840, 2160),
+]
+
+# Mac-specific native resolutions (logical "UI looks like" values)
+MAC_RESOLUTIONS = [
+    (1280, 832),    # MacBook Air 13" default
+    (1440, 900),    # MacBook Air 13" scaled
+    (1440, 932),    # MacBook Air 15" default
+    (1512, 982),    # MacBook Pro 14" default
+    (1680, 1050),   # common scaled option
+    (1728, 1117),   # MacBook Pro 16" default
+    (1920, 1080),   # standard HD
+    (1920, 1200),   # common external
+    (2240, 1260),   # iMac 24" default
+    (2560, 1440),   # Studio Display default
+    (2560, 1600),   # MacBook Air 13" native
+    (2880, 1864),   # MacBook Air 15" native
+    (3024, 1964),   # MacBook Pro 14" native
+    (3456, 2234),   # MacBook Pro 16" native
+    (3840, 2160),   # 4K external
+    (4480, 2520),   # iMac 24" native
+    (5120, 2880),   # Studio Display native
 ]
 
 # Colors
