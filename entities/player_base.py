@@ -112,14 +112,24 @@ class PlayerBase(pygame.sprite.Sprite):
             else:
                 move_dx, move_dy = 0, 0
         else:
-            if keys[pygame.K_w] or keys[pygame.K_UP]:    move_dy -= 1
-            if keys[pygame.K_s] or keys[pygame.K_DOWN]:  move_dy += 1
-            if keys[pygame.K_a] or keys[pygame.K_LEFT]:  move_dx -= 1
-            if keys[pygame.K_d] or keys[pygame.K_RIGHT]: move_dx += 1
+            # Read keybinds from config
+            _kb = _settings.config.get("keybinds", {})
+            k_up = _kb.get("move_up", pygame.K_w)
+            k_down = _kb.get("move_down", pygame.K_s)
+            k_left = _kb.get("move_left", pygame.K_a)
+            k_right = _kb.get("move_right", pygame.K_d)
+            k_dash = _kb.get("dash", pygame.K_SPACE)
 
-        # ---- DASH (hold space OR mouse1) ----
+            if keys[k_up] or keys[pygame.K_UP]:    move_dy -= 1
+            if keys[k_down] or keys[pygame.K_DOWN]:  move_dy += 1
+            if keys[k_left] or keys[pygame.K_LEFT]:  move_dx -= 1
+            if keys[k_right] or keys[pygame.K_RIGHT]: move_dx += 1
+
+        # ---- DASH (hold key OR mouse1) ----
+        _kb = _settings.config.get("keybinds", {})
+        k_dash = _kb.get("dash", pygame.K_SPACE)
         mouse_buttons = pygame.mouse.get_pressed()
-        dash_input = keys[pygame.K_SPACE] or mouse_buttons[0]
+        dash_input = keys[k_dash] or mouse_buttons[0]
         if dash_input:
             if use_mouse or mouse_buttons[0]:
                 mx, my = pygame.mouse.get_pos()

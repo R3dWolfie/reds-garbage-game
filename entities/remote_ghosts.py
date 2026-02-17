@@ -5,7 +5,7 @@ import pygame
 import math
 from core.settings import *
 from core.sprite_loader import load_sprite, make_neon_sprite
-from core.game_state import small_font
+import core.game_state as _gs
 
 
 class RemoteEnemyGhost(pygame.sprite.Sprite):
@@ -32,14 +32,34 @@ class RemoteEnemyGhost(pygame.sprite.Sprite):
         self.rect.y = y
 
     def update_from_state(self, state):
-        self.target_x = state.get("x", self.target_x)
-        self.target_y = state.get("y", self.target_y)
+        new_x = state.get("x", self.target_x)
+        new_y = state.get("y", self.target_y)
+        # Track velocity for prediction
+        self._vel_x = new_x - self.target_x
+        self._vel_y = new_y - self.target_y
+        self.target_x = new_x
+        self.target_y = new_y
         self.health = state.get("health", self.health)
         self.max_health = state.get("max_health", self.max_health)
 
     def update(self):
-        self.rect.x += (self.target_x - self.rect.x) * 0.4
-        self.rect.y += (self.target_y - self.rect.y) * 0.4
+        # Smooth lerp + velocity prediction for fluid movement
+        vx = getattr(self, '_vel_x', 0)
+        vy = getattr(self, '_vel_y', 0)
+        # Predict slightly ahead
+        pred_x = self.target_x + vx * 0.3
+        pred_y = self.target_y + vy * 0.3
+        dx = pred_x - self.rect.x
+        dy = pred_y - self.rect.y
+        dist = max(1, (dx*dx + dy*dy) ** 0.5)
+        # Adaptive speed: faster when far behind, slower when close
+        speed = min(dist * 0.15, max(2, dist * 0.08))
+        if dist < 2:
+            self.rect.x = self.target_x
+            self.rect.y = self.target_y
+        else:
+            self.rect.x += (dx / dist) * speed
+            self.rect.y += (dy / dist) * speed
 
     def take_damage(self, amount):
         pass
@@ -98,8 +118,13 @@ class RemotePlayerGhost(pygame.sprite.Sprite):
         self.rect = self.image.get_rect()
 
     def update_from_state(self, state):
-        self.target_x = state.get("x", self.target_x)
-        self.target_y = state.get("y", self.target_y)
+        new_x = state.get("x", self.target_x)
+        new_y = state.get("y", self.target_y)
+        # Track velocity for prediction
+        self._vel_x = new_x - self.target_x
+        self._vel_y = new_y - self.target_y
+        self.target_x = new_x
+        self.target_y = new_y
         self.health = state.get("health", self.health)
         self.max_health = state.get("max_health", self.max_health)
         self.level = state.get("level", self.level)
@@ -114,11 +139,24 @@ class RemotePlayerGhost(pygame.sprite.Sprite):
             self._build_sprite(new_class)
 
     def update(self):
-        self.rect.x += (self.target_x - self.rect.x) * 0.3
-        self.rect.y += (self.target_y - self.rect.y) * 0.3
+        # Smooth movement with velocity prediction
+        vx = getattr(self, '_vel_x', 0)
+        vy = getattr(self, '_vel_y', 0)
+        pred_x = self.target_x + vx * 0.3
+        pred_y = self.target_y + vy * 0.3
+        dx = pred_x - self.rect.x
+        dy = pred_y - self.rect.y
+        dist = max(1, (dx*dx + dy*dy) ** 0.5)
+        speed = min(dist * 0.15, max(2, dist * 0.08))
+        if dist < 2:
+            self.rect.x = self.target_x
+            self.rect.y = self.target_y
+        else:
+            self.rect.x += (dx / dist) * speed
+            self.rect.y += (dy / dist) * speed
 
     def draw_label(self, surf):
-        label = small_font.render(f"{self.username} Lv{self.level}", True, CYAN)
+        label = _gs.small_font.render(f"{self.username} Lv{self.level}", True, CYAN)
         surf.blit(label, (self.rect.centerx - label.get_width() // 2, self.rect.y - 18))
 
     def draw_hat(self, surf):

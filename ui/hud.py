@@ -5,7 +5,12 @@ import pygame
 import math
 import core.settings as settings_module
 from core.settings import *
-from core.game_state import font, small_font, title_font, boss_font
+import core.game_state as _gs
+
+def _font():      return _gs.font
+def _small_font(): return _gs.small_font
+def _title_font(): return _gs.title_font
+def _boss_font():  return _gs.boss_font
 
 # Animation timer for HUD effects
 _hud_time = 0.0
@@ -37,7 +42,7 @@ def _neon_bar(surf, x, y, w, h, ratio, bar_color, border_color, glow=True):
 
 def draw_upgrade_counters(surf, player_obj):
     sx, sy = 10, 150
-    header = font.render("UPGRADES", True, (0, 255, 255))
+    header = _font().render("UPGRADES", True, (0, 255, 255))
     surf.blit(header, (sx, sy - 24))
     # Underline
     pygame.draw.line(surf, (0, 255, 255), (sx, sy - 2), (sx + header.get_width(), sy - 2), 1)
@@ -65,7 +70,7 @@ def draw_upgrade_counters(surf, player_obj):
             color = neon_colors[i % len(neon_colors)]
         else:
             color = (60, 60, 70)
-        text = small_font.render(f"{label}: {value}  (x{count})", True, color)
+        text = _small_font().render(f"{label}: {value}  (x{count})", True, color)
         surf.blit(text, (sx, sy + (i * 18)))
 
 
@@ -97,7 +102,7 @@ def draw_ui(surf, player_obj, wave, enemy_group, net_mode=None, party_level=None
         pulse_surf.fill((100, 200, 255, pulse_alpha))
         surf.blit(pulse_surf, (pulse_x - 3, 0))
 
-    xp_text = font.render(f"LVL {current_level}  ({current_xp_val}/{xp_to_next})", True, (200, 230, 255))
+    xp_text = _font().render(f"LVL {current_level}  ({current_xp_val}/{xp_to_next})", True, (200, 230, 255))
     surf.blit(xp_text, (10, 24))
 
     # Health Bar with neon red
@@ -119,19 +124,19 @@ def draw_ui(surf, player_obj, wave, enemy_group, net_mode=None, party_level=None
 
     _neon_bar(surf, hp_x, hp_y, hp_bar_w, hp_bar_h, hp_ratio, bar_col, border_col)
     hp_str = f"{max(0, player_obj.current_health)} / {player_obj.stats['max_health']}"
-    hp_text = font.render(hp_str, True, WHITE)
+    hp_text = _font().render(hp_str, True, WHITE)
     surf.blit(hp_text, (hp_x + hp_bar_w // 2 - hp_text.get_width() // 2,
                         hp_y + hp_bar_h // 2 - hp_text.get_height() // 2))
 
     # Quick Stats with neon
     crit_pct = int(getattr(player_obj, 'crit_chance', 0) * 100)
-    quick = font.render(
+    quick = _font().render(
         f"DMG:{player_obj.stats['damage']}  PIERCE:{player_obj.stats['piercing']}  "
         f"MULTI:{player_obj.stats['multishot']}  MAG:{player_obj.get_magnet_radius()}px",
         True, (180, 220, 255))
     surf.blit(quick, (10, 76))
 
-    class_txt = small_font.render(f"Class: {player_obj.DISPLAY_NAME}", True, player_obj.SPRITE_COLOR)
+    class_txt = _small_font().render(f"Class: {player_obj.DISPLAY_NAME}", True, player_obj.SPRITE_COLOR)
     surf.blit(class_txt, (10, 98))
 
     # Gold + extras line
@@ -149,7 +154,7 @@ def draw_ui(surf, player_obj, wave, enemy_group, net_mode=None, party_level=None
     if xp_mult > 1.0:
         extras.append(f"XP: {xp_mult:.1f}x")
     extras_str = "  |  ".join(extras)
-    extras_txt = small_font.render(extras_str, True, GOLD)
+    extras_txt = _small_font().render(extras_str, True, GOLD)
     surf.blit(extras_txt, (10, 114))
 
     # Wave Info (top right) with neon box
@@ -159,11 +164,11 @@ def draw_ui(surf, player_obj, wave, enemy_group, net_mode=None, party_level=None
     surf.blit(bg_surf, wave_box.topleft)
     pygame.draw.rect(surf, (0, 255, 255), wave_box, 1)
 
-    wave_text = font.render(f"Wave: {wave}", True, (0, 255, 255))
-    enemy_text = font.render(f"Enemies: {len(enemy_group)}", True, (200, 200, 255))
+    wave_text = _font().render(f"Wave: {wave}", True, (0, 255, 255))
+    enemy_text = _font().render(f"Enemies: {len(enemy_group)}", True, (200, 200, 255))
     surf.blit(wave_text, (sw - 165, 30))
     surf.blit(enemy_text, (sw - 165, 55))
-    esc_text = small_font.render("[ESC] Pause", True, (80, 80, 100))
+    esc_text = _small_font().render("[ESC] Pause", True, (80, 80, 100))
     surf.blit(esc_text, (sw - 165, 80))
 
     draw_upgrade_counters(surf, player_obj)
@@ -181,7 +186,7 @@ def draw_boss_health_bar(surf, enemy_group):
 
             _neon_bar(surf, bar_x, bar_y, bar_w, bar_h, hp_ratio, (180, 0, 255), (220, 50, 255))
 
-            txt = boss_font.render("BOSS", True, (220, 50, 255))
+            txt = _boss_font().render("BOSS", True, (220, 50, 255))
             # Glow behind boss text
             glow = pygame.Surface((txt.get_width() + 20, txt.get_height() + 10), pygame.SRCALPHA)
             glow.fill((180, 0, 255, 30))
@@ -194,10 +199,10 @@ def draw_wave_banner(surf, wave):
     sh = settings_module.SCREEN_HEIGHT
     if wave % 10 == 0:
         color = (220, 50, 255)
-        text = title_font.render(f"WAVE {wave} - BOSS!", True, color)
+        text = _title_font().render(f"WAVE {wave} - BOSS!", True, color)
     else:
         color = (255, 165, 0)
-        text = title_font.render(f"WAVE {wave}", True, color)
+        text = _title_font().render(f"WAVE {wave}", True, color)
 
     # Neon glow behind banner
     glow = pygame.Surface((text.get_width() + 40, text.get_height() + 20), pygame.SRCALPHA)

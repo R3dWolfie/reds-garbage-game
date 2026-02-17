@@ -227,16 +227,28 @@ class GameHost:
             return [self.host_player_id] + list(self.clients.keys())
 
     def broadcast(self, msg_type, data=None, exclude=None):
-        """Send a message to all connected clients."""
+        """Send a message to all connected clients (non-blocking)."""
         raw = encode_message(msg_type, data)
         with self.lock:
             for pid, client in list(self.clients.items()):
                 if pid == exclude:
                     continue
                 try:
-                    client["socket"].sendall(raw)
+                    client["socket"].setblocking(False)
+                    client["socket"].send(raw)
+                except BlockingIOError:
+                    # Queue for later — append to client buffer
+                    if "_send_buf" not in client:
+                        client["_send_buf"] = bytearray()
+                    client["_send_buf"].extend(raw)
                 except Exception:
                     pass
+                finally:
+                    try:
+                        client["socket"].setblocking(True)
+                        client["socket"].settimeout(0.5)
+                    except Exception:
+                        pass
 
     def send_to(self, player_id, msg_type, data=None):
         """Send a message to a specific client."""

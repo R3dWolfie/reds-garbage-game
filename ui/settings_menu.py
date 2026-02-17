@@ -26,7 +26,7 @@ DEFAULT_KEYBINDS = {
     "move_right": pygame.K_d,
     "dash": pygame.K_SPACE,
     "pause": pygame.K_ESCAPE,
-    "auto_upgrade": pygame.K_a,
+    "auto_upgrade": pygame.K_q,
 }
 
 KEYBIND_LABELS = {

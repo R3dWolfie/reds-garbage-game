@@ -12,7 +12,7 @@
   "music_volume": 0.5,
   "username": "Red",
   "mouse_move": true,
-  "gold": 33,
+  "gold": 2549,
   "highest_wave": 1,
   "equipped_hat": null,
   "collected_hats": [
@@ -36,7 +36,23 @@
     "wizard",
     "backwards_cap",
     "devilhorns",
-    "straw"
+    "straw",
+    "nightcap",
+    "disco",
+    "antenna",
+    "cowboy",
+    "mohawk",
+    "pirate",
+    "cap",
+    "flower",
+    "propeller",
+    "ushanka",
+    "chef",
+    "fez",
+    "tiara",
+    "witchhat",
+    "soulflame",
+    "halo"
   ],
   "perma_upgrades": {
     "roomba_count": 0,

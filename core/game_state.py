@@ -84,6 +84,12 @@ class DisplayManager:
         self._actual_w = w
         self._actual_h = h
 
+        # Rebuild fonts for new resolution
+        try:
+            _build_fonts()
+        except Exception:
+            pass
+
     def get_screen(self):
         return self.screen
 
@@ -171,7 +177,13 @@ def consume_shake():
 # ---- Clock ----
 clock = pygame.time.Clock()
 
-# ---- Fonts ----
+# ---- Fonts (scaled to resolution) ----
+def _scaled_font_size(base_size, ref_height=1080):
+    """Scale font size proportionally to screen height. Reference: 1080p."""
+    h = settings_module.SCREEN_HEIGHT or 1080
+    return max(8, int(base_size * h / ref_height))
+
+# Initial fonts at default sizes — will be rebuilt when resolution is set
 font = pygame.font.SysFont("Arial", 18)
 small_font = pygame.font.SysFont("Arial", 14)
 title_font = pygame.font.SysFont("Arial", 40)
@@ -179,6 +191,18 @@ boss_font = pygame.font.SysFont("Arial", 30, bold=True)
 menu_font = pygame.font.SysFont("Arial", 24)
 header_font = pygame.font.SysFont("Arial", 50, bold=True)
 desc_font = pygame.font.SysFont("Arial", 16, italic=True)
+
+def _build_fonts():
+    """Rebuild all fonts at the current resolution scale.
+    Updates module-level globals so all importers see new fonts."""
+    import core.game_state as _self
+    _self.font = pygame.font.SysFont("Arial", _scaled_font_size(18))
+    _self.small_font = pygame.font.SysFont("Arial", _scaled_font_size(14))
+    _self.title_font = pygame.font.SysFont("Arial", _scaled_font_size(40))
+    _self.boss_font = pygame.font.SysFont("Arial", _scaled_font_size(30), bold=True)
+    _self.menu_font = pygame.font.SysFont("Arial", _scaled_font_size(24))
+    _self.header_font = pygame.font.SysFont("Arial", _scaled_font_size(50), bold=True)
+    _self.desc_font = pygame.font.SysFont("Arial", _scaled_font_size(16), italic=True)
 
 
 # ===========================================================

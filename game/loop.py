@@ -19,10 +19,10 @@ from entities.enemy import (Enemy, Boss, ArrowEnemy, TankEnemy, SplitterEnemy, Z
                             create_boss_for_wave)
 from core.sprite_loader import load_sprite
 from networking.net_common import *
+import core.game_state as _gs
 from core.game_state import (
     display_mgr, clock, sounds, gs, PLAYER_CLASSES,
     trigger_shake, get_shake, consume_shake,
-    font, small_font, title_font, boss_font, menu_font, header_font,
     GAME_NAME, VERSION
 )
 from game.helpers import (
@@ -286,7 +286,20 @@ def run_game(class_key, starting_wave=1):
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     if not spectating:
+                        # In multiplayer, pause everyone while settings are open
+                        if gs.net_mode == "host" and gs.net_host:
+                            gs.upgrade_paused_by = {"player_name": gs.local_username, "level": "settings"}
+                            gs.net_host.broadcast(MSG_UPGRADE_PAUSE, {"player_name": gs.local_username, "level": "settings"})
+                        elif gs.net_mode == "client" and gs.net_client:
+                            gs.net_client.send(MSG_UPGRADE_PAUSE, {"player_name": gs.local_username, "level": "settings"})
                         action = show_pause_menu()
+                        # Unpause on close
+                        if gs.net_mode == "host" and gs.net_host:
+                            gs.upgrade_paused_by = None
+                            gs.net_host.broadcast(MSG_UPGRADE_RESUME, {})
+                        elif gs.net_mode == "client" and gs.net_client:
+                            gs.net_client.send(MSG_UPGRADE_RESUME, {})
+                            gs.upgrade_paused_by = None
                         if action == "main_menu":
                             return "main_menu"
                 if event.key == pygame.K_SPACE and not spectating:
@@ -310,10 +323,7 @@ def run_game(class_key, starting_wave=1):
         # PAUSE if anyone is choosing an upgrade
 
         if gs.upgrade_paused_by:
-            # DEBUG: Show we're paused
-            if getattr(run_game, '_pause_debug_counter', 0) % 60 == 0:  # Print every second
-                print(f"[{gs.net_mode or 'SP'}] PAUSED: gs.upgrade_paused_by = {gs.upgrade_paused_by}")
-            run_game._pause_debug_counter = getattr(run_game, '_pause_debug_counter', 0) + 1
+            pass  # Game paused for upgrades/settings
 
         if not gs.upgrade_paused_by:
             if gs.net_mode != "client":
@@ -783,6 +793,7 @@ def run_game(class_key, starting_wave=1):
 
             apply_magnet(player_obj, gems_grp)
             apply_gold_magnet(player_obj, gold_grp)
+            apply_magnet(player_obj, health_orbs_grp)  # Magnet picks up health orbs too
 
             # ---- AUTO-FIRE ----
             if fire_cooldown <= 0 and not spectating:
@@ -959,6 +970,18 @@ def run_game(class_key, starting_wave=1):
                                             gs.net_host.broadcast(MSG_ENEMY_DEAD, {"enemy_id": getattr(enemy, '_net_id', -1)})
                                         handle_enemy_death(enemy, all_sprites, gems_grp, health_orbs_grp, gs.net_mode, gs.net_host, gold_grp)
                             # Only fire 1 beam regardless of multishot (multishot = width bonus)
+                            # Broadcast beam to other players
+                            if gs.net_mode in ("host", "client"):
+                                beam_data = {
+                                    "weapon": "beam",
+                                    "segments": [[list(s), list(e)] for s, e in segments],
+                                    "width": beam_w,
+                                    "timer": 15,
+                                }
+                                if gs.net_mode == "host" and gs.net_host:
+                                    gs.net_host.broadcast(MSG_BULLET_FIRE, beam_data)
+                                elif gs.net_mode == "client" and gs.net_client:
+                                    gs.net_client.send(MSG_BULLET_FIRE, beam_data)
                             break
                         elif weapon == "laser":
                             b = LaserBeam(player_obj.rect.center, (target_x, target_y),
@@ -973,7 +996,7 @@ def run_game(class_key, starting_wave=1):
                             all_sprites.add(b)
                             bullets_grp.add(b)
 
-                        # Broadcast bullet to all other players
+                        # Broadcast bullet to all other players (beam synced separately above)
                         if weapon != "beam" and gs.net_mode in ("host", "client"):
                             bullet_data = {
                                 "weapon": weapon,
@@ -1664,27 +1687,36 @@ def run_game(class_key, starting_wave=1):
         # ========== NETWORKING ==========
         net_send_timer = getattr(run_game, '_net_timer', 0)
 
+        # Skip network state sync while upgrade menu is open (prevents flicker/catchup)
+        _net_paused = bool(gs.upgrade_paused_by)
+
         if gs.net_mode == "host" and gs.net_host:
             net_send_timer += 1
-            if net_send_timer >= 3:
+            if net_send_timer >= 4 and not _net_paused:
                 net_send_timer = 0
-                gs.net_host.broadcast(MSG_PLAYER_STATE, {
+                _full_timer = getattr(run_game, '_full_state_timer', 0) + 1
+                run_game._full_state_timer = _full_timer
+                # Fast position-only update (small packet)
+                state_data = {
                     "player_id": 0,
                     "x": player_obj.rect.x,
                     "y": player_obj.rect.y,
                     "health": player_obj.current_health,
                     "max_health": player_obj.stats["max_health"],
-                    "class": player_obj.CLASS_KEY,
-                    "level": player_obj.level,
-                    "username": gs.local_username,
-                    "equipped_hat": player_obj.equipped_hat,
                     "is_dead": spectating,
-                })
+                }
+                # Full state every ~1 second (60 frames) or first few frames
+                if _full_timer % 15 == 0 or _full_timer < 3:
+                    state_data["class"] = player_obj.CLASS_KEY
+                    state_data["level"] = player_obj.level
+                    state_data["username"] = gs.local_username
+                    state_data["equipped_hat"] = player_obj.equipped_hat
+                gs.net_host.broadcast(MSG_PLAYER_STATE, state_data)
 
-            # Broadcast enemy positions every 5 frames (15fps sync)
+            # Broadcast enemy positions every 8 frames (~7.5fps sync)
             enemy_timer = getattr(run_game, '_enemy_timer', 0)
             enemy_timer += 1
-            if enemy_timer >= 5:
+            if enemy_timer >= 8 and not _net_paused:
                 enemy_timer = 0
                 enemy_states = []
                 for e in enemies_grp:
@@ -1723,15 +1755,25 @@ def run_game(class_key, starting_wave=1):
                     bprc = data.get("piercing", 1)
                     bdmg = data.get("damage", 1)
                     bsz = data.get("size", 1.0)
-                    if btype == "laser":
+                    if btype == "beam":
+                        segs = data.get("segments", [])
+                        if segs:
+                            active_beam = {
+                                "segments": [(tuple(s[0]), tuple(s[1])) for s in segs],
+                                "timer": data.get("timer", 15),
+                                "width": data.get("width", 12),
+                                "dmg": 0, "angle": 0,
+                            }
+                    elif btype == "laser":
                         rb = LaserBeam(bpos, tpos, bspd, bprc, size=bsz)
+                        rb._net_damage = bdmg
+                        all_sprites.add(rb)
+                        bullets_grp.add(rb)
                     else:
                         rb = Bullet(bpos, tpos, bspd, bprc, size=bsz, color=tuple(data.get("color", [255,255,0])))
-                    rb._net_damage = bdmg
-                    all_sprites.add(rb)
-                    bullets_grp.add(rb)
-
-                elif msg_type == MSG_ENEMY_DEAD:
+                        rb._net_damage = bdmg
+                        all_sprites.add(rb)
+                        bullets_grp.add(rb)
                     # Client reported killing an enemy — find and kill it by net_id
                     eid = data.get("enemy_id", -1)
                     for e in list(enemies_grp):
@@ -1755,6 +1797,15 @@ def run_game(class_key, starting_wave=1):
                     # Client sent their helper positions — store and rebroadcast
                     gs.remote_helpers[from_id] = data.get("helpers", [])
                     gs.net_host.broadcast("helper_state", {"pid": from_id, "helpers": data.get("helpers", [])})
+
+                elif msg_type == MSG_UPGRADE_PAUSE:
+                    # Client opened settings/upgrade menu — pause game
+                    pname = data.get("player_name", f"Player{from_id}")
+                    gs.upgrade_paused_by = {"player_name": pname, "level": data.get("level", "?")}
+
+                elif msg_type == MSG_UPGRADE_RESUME:
+                    # Client closed settings/upgrade menu — check if we can resume
+                    gs.upgrade_paused_by = None
 
                 elif msg_type == MSG_GEM_COLLECT:
                     # Client picked up a gem — add to party XP
@@ -1804,7 +1855,8 @@ def run_game(class_key, starting_wave=1):
                     uname = usernames.get(pid, gs.remote_players[pid].username)
                     gs.remote_players[pid].username = uname
                 gs.remote_players[pid].update_from_state(state)
-                gs.remote_players[pid].update()
+                if not _net_paused:
+                    gs.remote_players[pid].update()
 
             # --- Host-authoritative wave broadcasting ---
             # Broadcast current wave state every second so clients stay in sync
@@ -1822,7 +1874,7 @@ def run_game(class_key, starting_wave=1):
 
         elif gs.net_mode == "client" and gs.net_client:
             net_send_timer += 1
-            if net_send_timer >= 3:
+            if net_send_timer >= 4 and not _net_paused:
                 net_send_timer = 0
                 gs.net_client.send_player_state(
                     player_obj.rect.x, player_obj.rect.y,
@@ -1830,15 +1882,22 @@ def run_game(class_key, starting_wave=1):
                     player_obj.level, player_obj.stats["max_health"],
                     player_obj.equipped_hat, spectating
                 )
-                # Also send helper positions
-                helper_states = []
-                for r in roombas_grp:
-                    helper_states.append({"type": "roomba", "x": r.rect.centerx, "y": r.rect.centery})
-                for s in saws_grp:
-                    helper_states.append({"type": "saw", "x": s.rect.centerx, "y": s.rect.centery,
-                                          "radius": getattr(s, 'orbit_radius', 50)})
-                if helper_states:
-                    gs.net_client.send("helper_state", {"helpers": helper_states})
+                # Send helper positions less frequently (every ~15 ticks)
+                _hlp_timer = getattr(run_game, '_helper_timer_c', 0) + 1
+                run_game._helper_timer_c = _hlp_timer
+                if _hlp_timer % 4 == 0:
+                    helper_states = []
+                    for r in roombas_grp:
+                        helper_states.append({"type": "roomba", "x": r.rect.centerx, "y": r.rect.centery})
+                    for s in saws_grp:
+                        helper_states.append({"type": "saw", "x": s.rect.centerx, "y": s.rect.centery,
+                                              "radius": getattr(s, 'orbit_radius', 50)})
+                    if helper_states:
+                        gs.net_client.send("helper_state", {"helpers": helper_states})
+
+            # Flush any pending sends
+            if hasattr(gs.net_client, '_flush_send'):
+                gs.net_client._flush_send()
 
             for msg in gs.net_client.get_messages():
                 msg_type = msg.get("type", "")
@@ -1851,7 +1910,8 @@ def run_game(class_key, starting_wave=1):
                         ghost = RemotePlayerGhost(pid, data.get("class", "default"), username=uname)
                         gs.remote_players[pid] = ghost
                     gs.remote_players[pid].update_from_state(data)
-                    gs.remote_players[pid].update()
+                    if not _net_paused:
+                        gs.remote_players[pid].update()
 
                 elif msg_type == MSG_USERNAME:
                     pid = data.get("player_id", -1)
@@ -1868,13 +1928,25 @@ def run_game(class_key, starting_wave=1):
                     bprc = data.get("piercing", 1)
                     bdmg = data.get("damage", 1)
                     bsz = data.get("size", 1.0)
-                    if btype == "laser":
+                    if btype == "beam":
+                        segs = data.get("segments", [])
+                        if segs:
+                            active_beam = {
+                                "segments": [(tuple(s[0]), tuple(s[1])) for s in segs],
+                                "timer": data.get("timer", 15),
+                                "width": data.get("width", 12),
+                                "dmg": 0, "angle": 0,
+                            }
+                    elif btype == "laser":
                         rb = LaserBeam(bpos, tpos, bspd, bprc, size=bsz)
+                        rb._net_damage = bdmg
+                        all_sprites.add(rb)
+                        bullets_grp.add(rb)
                     else:
                         rb = Bullet(bpos, tpos, bspd, bprc, size=bsz, color=tuple(data.get("color", [255,255,0])))
-                    rb._net_damage = bdmg
-                    all_sprites.add(rb)
-                    bullets_grp.add(rb)
+                        rb._net_damage = bdmg
+                        all_sprites.add(rb)
+                        bullets_grp.add(rb)
 
                 elif msg_type == MSG_ENEMY_SPAWN:
                     # Host spawned an enemy — create a ghost
@@ -1893,12 +1965,13 @@ def run_game(class_key, starting_wave=1):
                     enemies_grp.add(ghost)
 
                 elif msg_type == MSG_ENEMY_UPDATE:
-                    # Host sent enemy position updates
-                    enemy_list = data.get("enemies", [])
-                    for edata in enemy_list:
-                        eid = edata.get("enemy_id")
-                        if eid in gs.remote_enemies:
-                            gs.remote_enemies[eid].update_from_state(edata)
+                    # Host sent enemy position updates — skip during pause
+                    if not _net_paused:
+                        enemy_list = data.get("enemies", [])
+                        for edata in enemy_list:
+                            eid = edata.get("enemy_id")
+                            if eid in gs.remote_enemies:
+                                gs.remote_enemies[eid].update_from_state(edata)
 
                 elif msg_type == MSG_ENEMY_DEAD:
                     # Host says enemy died — remove ghost
@@ -1970,19 +2043,13 @@ def run_game(class_key, starting_wave=1):
                     show_upgrade_menu(is_big, player_obj, all_sprites, enemies_grp, gs.net_mode, gs.net_host, gs.net_client)
 
                 elif msg_type == MSG_UPGRADE_PAUSE:
-                    # Upgrade pause (party is choosing)
-                    print(f"[Client] Received MSG_UPGRADE_PAUSE: {data}")  # DEBUG
                     gs.upgrade_paused_by = {
                         "player_name": data.get("player_name", "Party"),
                         "level": data.get("level", 1)
                     }
-                    print(f"[Client] Set gs.upgrade_paused_by = {gs.upgrade_paused_by}")  # DEBUG
 
                 elif msg_type == MSG_UPGRADE_RESUME:
-                    # All players finished choosing
-                    print(f"[Client] Received MSG_UPGRADE_RESUME")  # DEBUG
                     gs.upgrade_paused_by = None
-                    print(f"[Client] Cleared gs.upgrade_paused_by")  # DEBUG
 
                 elif msg_type == MSG_WAVE_START:
                     # Host told us which wave we're on + party XP state
@@ -2073,13 +2140,13 @@ def run_game(class_key, starting_wave=1):
             # Message
             pname = gs.upgrade_paused_by.get("player_name", "Player")
             plevel = gs.upgrade_paused_by.get("level", 1)
-            wait_txt = title_font.render(f"{pname} is choosing upgrade...", True, GOLD)
+            wait_txt = _gs.title_font.render(f"{pname} is choosing upgrade...", True, GOLD)
             surf.blit(wait_txt, (sw // 2 - wait_txt.get_width() // 2, sh // 2 - 80))
-            lvl_txt = small_font.render(f"Level {plevel}", True, GRAY)
+            lvl_txt = _gs.small_font.render(f"Level {plevel}", True, GRAY)
             surf.blit(lvl_txt, (sw // 2 - lvl_txt.get_width() // 2, sh // 2 - 30))
 
             # Debug indicator showing game is paused
-            paused_txt = title_font.render("GAME PAUSED", True, RED)
+            paused_txt = _gs.title_font.render("GAME PAUSED", True, RED)
             surf.blit(paused_txt, (sw // 2 - paused_txt.get_width() // 2, sh // 2 + 20))
 
         # ========== SPECTATE OVERLAY ==========
@@ -2094,14 +2161,14 @@ def run_game(class_key, starting_wave=1):
                 ghost = gs.remote_players[spectate_target_id]
                 # Draw a bright ring around spectated player
                 pygame.draw.circle(surf, CYAN, ghost.rect.center, ghost.rect.width + 8, 2)
-                name_surf = menu_font.render(f"Watching: {ghost.username}", True, CYAN)
+                name_surf = _gs.menu_font.render(f"Watching: {ghost.username}", True, CYAN)
                 surf.blit(name_surf, (sw // 2 - name_surf.get_width() // 2, 50))
 
-            dead_txt = title_font.render("YOU DIED", True, RED)
+            dead_txt = _gs.title_font.render("YOU DIED", True, RED)
             surf.blit(dead_txt, (sw // 2 - dead_txt.get_width() // 2, sh // 2 - 60))
-            spec_hint = small_font.render("Spectating  |  ← → to switch player", True, LIGHT_GRAY)
+            spec_hint = _gs.small_font.render("Spectating  |  ← → to switch player", True, LIGHT_GRAY)
             surf.blit(spec_hint, (sw // 2 - spec_hint.get_width() // 2, sh // 2 - 20))
-            wave_txt = small_font.render(f"Wave {current_wave}  |  {len(enemies_grp)} enemies remaining", True, GRAY)
+            wave_txt = _gs.small_font.render(f"Wave {current_wave}  |  {len(enemies_grp)} enemies remaining", True, GRAY)
             surf.blit(wave_txt, (sw // 2 - wave_txt.get_width() // 2, sh // 2 + 10))
         else:
             # ========== DRAW UI ==========
@@ -2130,7 +2197,7 @@ def run_game(class_key, starting_wave=1):
                 pygame.draw.line(surf, (min(255, bar_color[0] + 80), min(255, bar_color[1] + 80), min(255, bar_color[2] + 80)),
                                  (bar_x + ready_w - 1, bar_y + 1), (bar_x + ready_w - 1, bar_y + bar_h - 2))
             pygame.draw.rect(surf, bar_color, (bar_x, bar_y, bar_w, bar_h), 1)
-            dash_label = small_font.render("DASH [HOLD]" if dash_ratio == 0 else "DASH", True,
+            dash_label = _gs.small_font.render("DASH [HOLD]" if dash_ratio == 0 else "DASH", True,
                                            (0, 255, 255) if dash_ratio == 0 else (80, 80, 100))
             surf.blit(dash_label, (bar_x + bar_w // 2 - dash_label.get_width() // 2, bar_y - 16))
 
@@ -2141,7 +2208,7 @@ def run_game(class_key, starting_wave=1):
                 if _shield_active:
                     pygame.draw.circle(surf, (80, 200, 255), (shield_x + 10, shield_y + 5), 10)
                     pygame.draw.circle(surf, (150, 230, 255), (shield_x + 10, shield_y + 5), 10, 2)
-                    sh_label = small_font.render("⛊", True, (200, 240, 255))
+                    sh_label = _gs.small_font.render("⛊", True, (200, 240, 255))
                 else:
                     ratio = _shield_timer / max(1, _shield_recharge_time)
                     pygame.draw.circle(surf, (30, 50, 70), (shield_x + 10, shield_y + 5), 10)
@@ -2149,7 +2216,7 @@ def run_game(class_key, starting_wave=1):
                     if ratio > 0:
                         arc_rect = pygame.Rect(shield_x, shield_y - 5, 20, 20)
                         pygame.draw.arc(surf, (60, 140, 200), arc_rect, math.pi/2, math.pi/2 + ratio * math.pi * 2, 2)
-                    sh_label = small_font.render("⛊", True, (60, 80, 100))
+                    sh_label = _gs.small_font.render("⛊", True, (60, 80, 100))
                 surf.blit(sh_label, (shield_x + 3, shield_y - 4))
 
         if wave_banner_timer > 0:
@@ -2171,8 +2238,8 @@ def run_game(class_key, starting_wave=1):
             pygame.draw.rect(nbs, (*rc[:3], int(alpha * 0.5)), (0,0,300,32), 2, border_radius=6)
             surf.blit(nbs, (sw//2 - 150, ny))
             # Text
-            ht = small_font.render(f"NEW HAT: {notif['name']}", True, (*rc[:3],))
-            rt = small_font.render(f"[{notif['rarity'].upper()}]", True, (*rc[:3],))
+            ht = _gs.small_font.render(f"NEW HAT: {notif['name']}", True, (*rc[:3],))
+            rt = _gs.small_font.render(f"[{notif['rarity'].upper()}]", True, (*rc[:3],))
             surf.blit(ht, (sw//2 - ht.get_width()//2, ny + 2))
             surf.blit(rt, (sw//2 - rt.get_width()//2, ny + 16))
             ny -= 38
@@ -2181,11 +2248,11 @@ def run_game(class_key, starting_wave=1):
         if gs.net_mode:
             if gs.net_mode == "host":
                 count = gs.net_host.get_player_count() if gs.net_host else 1
-                net_txt = small_font.render(f"Hosting | {count} players", True, CYAN)
+                net_txt = _gs.small_font.render(f"Hosting | {count} players", True, CYAN)
             else:
                 status = "Connected" if (gs.net_client and gs.net_client.connected) else "Disconnected"
                 color = GREEN if status == "Connected" else RED
-                net_txt = small_font.render(f"Client | {status}", True, color)
+                net_txt = _gs.small_font.render(f"Client | {status}", True, color)
             surf.blit(net_txt, (sw - 200, 105))
 
         display_mgr.present()
