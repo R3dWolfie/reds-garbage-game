@@ -27,6 +27,15 @@ MSG_ENEMY_DEAD = "enemy_dead"
 MSG_ORB_SPAWN = "orb_spawn"
 MSG_USERNAME = "username"
 
+# ---- Set SDL hints BEFORE pygame.init() ----
+import os
+import platform
+if platform.system() == "Darwin":
+    # Enable high-DPI rendering on macOS Retina displays
+    os.environ['SDL_VIDEO_HIGHDPI_DISABLED'] = '0'
+    # Tell SDL to use the full pixel resolution
+    os.environ['SDL_HINT_VIDEO_HIGHDPI_DISABLED'] = '0'
+
 # ---- Initialize pygame ----
 pygame.init()
 pygame.mixer.init()
@@ -70,54 +79,31 @@ class DisplayManager:
         internal_w = settings_module.INTERNAL_WIDTH
         internal_h = settings_module.INTERNAL_HEIGHT
 
-        import platform
-        is_macos = platform.system() == "Darwin"
-
         if fullscreen:
-            if is_macos:
-                # macOS Retina: use pygame.SCALED for native GPU scaling
-                # This gives the sharpest result on HiDPI displays
-                flags = pygame.SCALED | pygame.FULLSCREEN
+            # Fullscreen at the selected resolution
+            try:
+                self.screen = pygame.display.set_mode((display_w, display_h), pygame.FULLSCREEN)
+            except Exception:
                 try:
-                    self.screen = pygame.display.set_mode((internal_w, internal_h), flags)
+                    self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
                 except Exception:
-                    self.screen = pygame.display.set_mode((internal_w, internal_h), pygame.FULLSCREEN)
-                self._windowed = False
-                self._render_surface = None
-            else:
-                # Windows/Linux: fullscreen at selected resolution with render scaling
-                try:
-                    self.screen = pygame.display.set_mode((display_w, display_h), pygame.FULLSCREEN)
-                except Exception:
-                    try:
-                        self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-                    except Exception:
-                        self.screen = pygame.display.set_mode((internal_w, internal_h))
-
-                actual_w, actual_h = self.screen.get_size()
-                if (actual_w, actual_h) != (internal_w, internal_h):
-                    self._windowed = True  # reuse the scaling path
-                    self._render_surface = pygame.Surface((internal_w, internal_h))
-                else:
-                    self._windowed = False
-                    self._render_surface = None
+                    self.screen = pygame.display.set_mode((internal_w, internal_h))
         else:
-            # Windowed: create window at selected resolution
-            flags = 0
-            if borderless:
-                flags |= pygame.NOFRAME
-
+            # Windowed at selected resolution
+            flags = pygame.NOFRAME if borderless else 0
             try:
                 self.screen = pygame.display.set_mode((display_w, display_h), flags)
             except Exception:
-                try:
-                    self.screen = pygame.display.set_mode((1920, 1080), flags)
-                except Exception:
-                    self.screen = pygame.display.set_mode((1920, 1080))
+                self.screen = pygame.display.set_mode((1920, 1080))
 
-            self._windowed = True
-            # Create internal render surface at 1920x1080
+        # Always use a render surface — game draws at 1920x1080,
+        # then we scale to whatever the actual screen size is
+        actual_w, actual_h = self.screen.get_size()
+        if (actual_w, actual_h) != (internal_w, internal_h):
             self._render_surface = pygame.Surface((internal_w, internal_h))
+        else:
+            self._render_surface = None
+        self._windowed = self._render_surface is not None
 
         pygame.display.set_caption("Red's Garbage Game")
 
@@ -141,23 +127,38 @@ class DisplayManager:
             pass
 
     def get_screen(self):
-        """Return the surface to draw on. In windowed mode, this is the
-        internal render surface (1920x1080). In fullscreen, it's the display."""
-        if self._windowed and self._render_surface is not None:
+        """Return the surface to draw on. Always 1920x1080."""
+        if self._render_surface is not None:
             return self._render_surface
         return self.screen
 
     def present(self):
-        """Present the frame. In windowed mode, scale internal surface to window."""
-        if self._windowed and self._render_surface is not None:
-            # Scale 1920x1080 render to the actual window size
+        """Present the frame. Scale internal surface to actual screen."""
+        if self._render_surface is not None:
             win_w, win_h = self.screen.get_size()
-            if (win_w, win_h) != (self._render_surface.get_width(), self._render_surface.get_height()):
-                scaled = pygame.transform.smoothscale(self._render_surface, (win_w, win_h))
-                self.screen.blit(scaled, (0, 0))
-            else:
-                self.screen.blit(self._render_surface, (0, 0))
+            scaled = pygame.transform.smoothscale(self._render_surface, (win_w, win_h))
+            self.screen.blit(scaled, (0, 0))
         pygame.display.flip()
+
+    def get_mouse_pos(self):
+        """Get mouse position mapped to internal 1920x1080 coordinates."""
+        mx, my = _original_get_pos()
+        if self._render_surface is not None:
+            win_w, win_h = self.screen.get_size()
+            int_w, int_h = self._render_surface.get_size()
+            if win_w > 0 and win_h > 0:
+                mx = int(mx * int_w / win_w)
+                my = int(my * int_h / win_h)
+        return mx, my
+
+    def _scale_pos(self, pos):
+        """Scale a screen position to internal coordinates."""
+        if self._render_surface is not None:
+            win_w, win_h = self.screen.get_size()
+            int_w, int_h = self._render_surface.get_size()
+            if win_w > 0 and win_h > 0:
+                return (int(pos[0] * int_w / win_w), int(pos[1] * int_h / win_h))
+        return pos
 
     def set_resolution(self, res):
         self.config["resolution"] = list(res)
@@ -201,6 +202,25 @@ class DisplayManager:
 
 display_mgr = DisplayManager()
 screen = display_mgr.get_screen()
+
+# Monkey-patch pygame.mouse.get_pos so all existing code
+# automatically gets coordinates in internal 1920x1080 space
+_original_get_pos = pygame.mouse.get_pos
+def _scaled_get_pos():
+    return display_mgr.get_mouse_pos()
+pygame.mouse.get_pos = _scaled_get_pos
+
+# Monkey-patch pygame.event.get to translate mouse event positions
+_original_event_get = pygame.event.get
+_MOUSE_EVENTS = {pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION}
+def _scaled_event_get(*args, **kwargs):
+    events = _original_event_get(*args, **kwargs)
+    for ev in events:
+        if ev.type in _MOUSE_EVENTS and hasattr(ev, 'pos'):
+            # Create new event with translated pos
+            ev.__dict__['pos'] = display_mgr._scale_pos(ev.pos)
+    return events
+pygame.event.get = _scaled_event_get
 
 # Clipboard support (requires display)
 try:

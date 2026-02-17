@@ -67,18 +67,12 @@ def _get_platform():
 
 def _get_install_dir():
     """Get the root install directory (where the game files live).
-    On macOS .app bundles, this is Contents/Resources/ inside the .app."""
+    On macOS .app bundles (PyInstaller), files are in Contents/MacOS/."""
     if getattr(sys, 'frozen', False):
-        exe_dir = os.path.dirname(sys.executable)
-        # Detect macOS .app bundle: executable is in Something.app/Contents/MacOS/
-        if platform.system() == "Darwin" and "/Contents/MacOS" in exe_dir:
-            # Game files are in Contents/Resources/ for .app bundles
-            resources = os.path.join(os.path.dirname(exe_dir), "Resources")
-            if os.path.isdir(resources):
-                return resources
-            # Fallback: some PyInstaller builds put files next to the binary
-            return exe_dir
-        return exe_dir
+        # For PyInstaller, sys.executable is the binary itself
+        # On macOS .app: Something.app/Contents/MacOS/RedsGarbageGame
+        # Game files (_internal/) are next to it in Contents/MacOS/
+        return os.path.dirname(sys.executable)
     else:
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
