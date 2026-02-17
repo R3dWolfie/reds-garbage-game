@@ -112,8 +112,73 @@ jobs:
           cd dist
           tar -czf RedsGarbageGame-macos.tar.gz RedsGarbageGame/
 
-      - name: Upload artifact
+      - name: Create DMG
+        run: |
+          # Create a temporary directory for DMG contents
+          mkdir -p dmg_contents
+          
+          # If .app bundle exists, use it; otherwise create one from the folder build
+          if [ -d "dist/Red's Garbage Game.app" ]; then
+            cp -R "dist/Red's Garbage Game.app" "dmg_contents/Red's Garbage Game.app"
+          else
+            # Create a minimal .app wrapper around the folder build
+            APP="dmg_contents/Red's Garbage Game.app"
+            mkdir -p "$APP/Contents/MacOS"
+            mkdir -p "$APP/Contents/Resources"
+            
+            # Copy all game files into Resources
+            cp -R dist/RedsGarbageGame/* "$APP/Contents/Resources/"
+            
+            # Create launcher script
+            cat > "$APP/Contents/MacOS/RedsGarbageGame" << 'LAUNCHER'
+          #!/bin/bash
+          DIR="$(cd "$(dirname "$0")/../Resources" && pwd)"
+          cd "$DIR"
+          exec "./RedsGarbageGame" "$@"
+          LAUNCHER
+            chmod +x "$APP/Contents/MacOS/RedsGarbageGame"
+            
+            # Create Info.plist
+            cat > "$APP/Contents/Info.plist" << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key>
+            <string>Red's Garbage Game</string>
+            <key>CFBundleDisplayName</key>
+            <string>Red's Garbage Game</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.r3dwolfie.redsgarbagegame</string>
+            <key>CFBundleExecutable</key>
+            <string>RedsGarbageGame</string>
+            <key>CFBundleVersion</key>
+            <string>0.3.4</string>
+            <key>CFBundleShortVersionString</key>
+            <string>0.3.4</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+            <key>NSSupportsAutomaticGraphicsSwitching</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+          fi
+          
+          # Create DMG
+          hdiutil create -volname "Red's Garbage Game" \
+            -srcfolder dmg_contents \
+            -ov -format UDZO \
+            "dist/RedsGarbageGame-macos.dmg"
+
+      - name: Upload tar.gz
         uses: actions/upload-artifact@v4
         with:
           name: RedsGarbageGame-macOS
           path: dist/RedsGarbageGame-macos.tar.gz
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedsGarbageGame-macOS-DMG
+          path: dist/RedsGarbageGame-macos.dmg
