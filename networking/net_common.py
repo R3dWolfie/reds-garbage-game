@@ -42,6 +42,9 @@ MSG_PARTY_LEVEL_UP = "party_level_up"
 MSG_UPGRADE_DONE = "upgrade_done"
 MSG_GOLD_SYNC = "gold_sync"
 MSG_HAT_DROP = "hat_drop"
+MSG_ORB_PICKUP = "orb_pickup"
+MSG_SHAKE = "shake"
+MSG_REVIVE = "revive"
 
 
 def encode_message(msg_type, data=None):

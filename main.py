@@ -6,6 +6,7 @@ Imports all modules and runs the main loop.
 
 import pygame
 import sys
+import atexit
 
 # Initialize shared state (pygame.init happens here)
 from core.game_state import display_mgr, gs
@@ -14,6 +15,27 @@ from core.game_state import display_mgr, gs
 from ui.menus import show_main_menu, show_class_selection, show_play_mode
 from ui.multiplayer_menus import show_multiplayer_menu, show_lobby
 from game.loop import run_game
+
+
+def _cleanup_on_exit():
+    """Ensure lobby registration is cleaned up on any exit."""
+    if hasattr(gs, '_lobby_register') and gs._lobby_register:
+        try:
+            gs._lobby_register.stop()
+        except:
+            pass
+    if gs.net_host:
+        try:
+            gs.net_host.stop()
+        except:
+            pass
+    if gs.net_client:
+        try:
+            gs.net_client.disconnect()
+        except:
+            pass
+
+atexit.register(_cleanup_on_exit)
 
 
 def _show_restart_prompt(running_ver, disk_ver):
@@ -147,6 +169,9 @@ def main():
                         if gs.net_host:
                             gs.net_host.stop()
                             gs.net_host = None
+                        if hasattr(gs, '_lobby_register') and gs._lobby_register:
+                            gs._lobby_register.stop()
+                            gs._lobby_register = None
                         if gs.net_client:
                             gs.net_client.disconnect()
                             gs.net_client = None
@@ -165,6 +190,9 @@ def main():
                         if gs.net_host:
                             gs.net_host.stop()
                             gs.net_host = None
+                        if hasattr(gs, '_lobby_register') and gs._lobby_register:
+                            gs._lobby_register.stop()
+                            gs._lobby_register = None
                         if gs.net_client:
                             gs.net_client.disconnect()
                             gs.net_client = None

@@ -47,7 +47,8 @@ PLAYER_CLASSES = {
 # ===========================================================
 
 class DisplayManager:
-    """Manages display. Uses pygame.SCALED for automatic resolution handling."""
+    """Manages display. Always renders at 1920x1080 internal resolution.
+    pygame.SCALED handles stretching to the actual window/monitor size."""
     def __init__(self):
         self.config = settings_module.config
         self.screen = None
@@ -56,13 +57,19 @@ class DisplayManager:
         self.apply()
 
     def apply(self):
-        w, h = self.config["resolution"]
+        # The config "resolution" is the desired *display* size,
+        # but we always render internally at 1920x1080.
+        display_w, display_h = self.config["resolution"]
         fullscreen = self.config.get("fullscreen", True)
         borderless = self.config.get("borderless", False)
         fps = self.config.get("fps", 60)
 
-        # pygame.SCALED handles all resolution scaling automatically
-        # It renders at the requested resolution and scales to fit the window
+        # Always render at fixed internal resolution
+        internal_w = settings_module.INTERNAL_WIDTH
+        internal_h = settings_module.INTERNAL_HEIGHT
+
+        # pygame.SCALED: renders at internal_w x internal_h, then
+        # scales output to the actual window/fullscreen size
         flags = pygame.SCALED
         if fullscreen:
             flags |= pygame.FULLSCREEN
@@ -70,23 +77,31 @@ class DisplayManager:
             flags |= pygame.NOFRAME
 
         try:
-            self.screen = pygame.display.set_mode((w, h), flags)
+            self.screen = pygame.display.set_mode((internal_w, internal_h), flags)
         except Exception:
             try:
-                self.screen = pygame.display.set_mode((w, h))
+                self.screen = pygame.display.set_mode((internal_w, internal_h))
             except Exception:
                 self.screen = pygame.display.set_mode((1920, 1080))
 
         pygame.display.set_caption("Red's Garbage Game")
-        settings_module.SCREEN_WIDTH = w
-        settings_module.SCREEN_HEIGHT = h
-        settings_module.FPS = fps
-        self._actual_w = w
-        self._actual_h = h
 
-        # Rebuild fonts for new resolution
+        # Internal resolution is always fixed
+        settings_module.SCREEN_WIDTH = internal_w
+        settings_module.SCREEN_HEIGHT = internal_h
+        settings_module.FPS = fps
+        self._actual_w = display_w
+        self._actual_h = display_h
+
+        # Rebuild fonts (fixed sizes, no scaling needed)
         try:
             _build_fonts()
+        except Exception:
+            pass
+
+        # Reset clock to prevent huge dt spike after display mode change
+        try:
+            clock.tick(fps if fps > 0 else 60)
         except Exception:
             pass
 
@@ -177,13 +192,7 @@ def consume_shake():
 # ---- Clock ----
 clock = pygame.time.Clock()
 
-# ---- Fonts (scaled to resolution) ----
-def _scaled_font_size(base_size, ref_height=1080):
-    """Scale font size proportionally to screen height. Reference: 1080p."""
-    h = settings_module.SCREEN_HEIGHT or 1080
-    return max(8, int(base_size * h / ref_height))
-
-# Initial fonts at default sizes — will be rebuilt when resolution is set
+# ---- Fonts (fixed sizes — internal resolution is always 1920x1080) ----
 font = pygame.font.SysFont("Arial", 18)
 small_font = pygame.font.SysFont("Arial", 14)
 title_font = pygame.font.SysFont("Arial", 40)
@@ -193,16 +202,15 @@ header_font = pygame.font.SysFont("Arial", 50, bold=True)
 desc_font = pygame.font.SysFont("Arial", 16, italic=True)
 
 def _build_fonts():
-    """Rebuild all fonts at the current resolution scale.
-    Updates module-level globals so all importers see new fonts."""
+    """Rebuild all fonts. Fixed sizes since internal resolution is always 1080p."""
     import core.game_state as _self
-    _self.font = pygame.font.SysFont("Arial", _scaled_font_size(18))
-    _self.small_font = pygame.font.SysFont("Arial", _scaled_font_size(14))
-    _self.title_font = pygame.font.SysFont("Arial", _scaled_font_size(40))
-    _self.boss_font = pygame.font.SysFont("Arial", _scaled_font_size(30), bold=True)
-    _self.menu_font = pygame.font.SysFont("Arial", _scaled_font_size(24))
-    _self.header_font = pygame.font.SysFont("Arial", _scaled_font_size(50), bold=True)
-    _self.desc_font = pygame.font.SysFont("Arial", _scaled_font_size(16), italic=True)
+    _self.font = pygame.font.SysFont("Arial", 18)
+    _self.small_font = pygame.font.SysFont("Arial", 14)
+    _self.title_font = pygame.font.SysFont("Arial", 40)
+    _self.boss_font = pygame.font.SysFont("Arial", 30, bold=True)
+    _self.menu_font = pygame.font.SysFont("Arial", 24)
+    _self.header_font = pygame.font.SysFont("Arial", 50, bold=True)
+    _self.desc_font = pygame.font.SysFont("Arial", 16, italic=True)
 
 
 # ===========================================================

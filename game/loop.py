@@ -29,13 +29,16 @@ from game.helpers import (
     get_nearest_enemies, handle_enemy_death, apply_magnet,
     apply_gold_magnet, get_perma_stats, add_gold, hat_notifications
 )
-from ui.hud import draw_ui, draw_boss_health_bar, draw_wave_banner, draw_enemy_health_bars
+from ui.hud import draw_ui, draw_boss_health_bar, draw_wave_banner, draw_enemy_health_bars, draw_fps_ping
 from ui.upgrade_menu import show_upgrade_menu
 from ui.menus import show_pause_menu, show_game_over
 from ui import vfx
 from entities.remote_ghosts import RemoteEnemyGhost, RemotePlayerGhost
 
 def run_game(class_key, starting_wave=1):
+
+    # Reset per-run multiplayer state
+    gs._was_revived = set()
 
     # Create player from selected class
     PlayerClass = PLAYER_CLASSES[class_key]
@@ -119,7 +122,7 @@ def run_game(class_key, starting_wave=1):
 
     # Apply fire rate bonus
     if _fire_rate_mult < 1.0:
-        player_obj.stats["fire_rate"] = max(3, int(player_obj.stats["fire_rate"] * _fire_rate_mult))
+        player_obj.stats["fire_rate"] = max(3, round(player_obj.stats["fire_rate"] * _fire_rate_mult, 1))
 
     # Gold collected this run
     gold_this_run = 0
@@ -198,6 +201,12 @@ def run_game(class_key, starting_wave=1):
 
         return find_nearest
 
+    def net_shake(frames, intensity):
+        """Trigger shake locally and broadcast to multiplayer."""
+        trigger_shake(frames, intensity)
+        if gs.net_mode == "host" and gs.net_host:
+            gs.net_host.broadcast(MSG_SHAKE, {"f": frames, "i": intensity})
+
     def start_wave(wave_num):
         nonlocal enemies_to_spawn, enemies_spawned, wave_active, spawn_timer, wave_banner_timer
         base_count = 5 + (wave_num * 3)
@@ -268,12 +277,6 @@ def run_game(class_key, starting_wave=1):
     # Beam weapon state (Arcanist)
     active_beam = None  # {"start": (x,y), "end": (x,y), "timer": int, "width": float, "dmg": int}
     beam_hit_this_frame = set()  # Track enemies already hit by beam this frame
-
-    def net_shake(frames, intensity):
-        """Trigger shake locally and broadcast to multiplayer."""
-        trigger_shake(frames, intensity)
-        if gs.net_mode == "host" and gs.net_host:
-            gs.net_host.broadcast(MSG_SHAKE, {"f": frames, "i": intensity})
 
     while True:
         # Delta time: real ms since last frame, normalized to 60fps baseline
@@ -872,7 +875,7 @@ def run_game(class_key, starting_wave=1):
             apply_magnet(player_obj, health_orbs_grp)  # Magnet picks up health orbs too
 
             # ---- AUTO-FIRE ----
-            if fire_cooldown <= 0 and not spectating and len(bullets_grp) < 200:
+            if fire_cooldown <= 0 and not spectating and len(bullets_grp) < 500:
                 # Get the SINGLE nearest enemy
                 targets = get_nearest_enemies(player_obj, enemies_grp, 1)
 
@@ -1103,7 +1106,7 @@ def run_game(class_key, starting_wave=1):
                     fire_cooldown = player_obj.stats["fire_rate"]
                     sounds.play_shoot()
             else:
-                fire_cooldown -= dt
+                fire_cooldown -= dt  # dt-based: framerate independent
 
             # ---- COLLISIONS ----
 
@@ -1416,7 +1419,9 @@ def run_game(class_key, starting_wave=1):
                     if saw.rect.colliderect(enemy.rect) and saw.can_hit_enemy(enemy):
                         saw.hit_enemy(enemy)
                         dead = enemy.take_damage(saw.damage)
-                        vfx.hit_spark(enemy.rect.centerx, enemy.rect.centery, (255,200,100))
+                        mid_x = (saw.rect.centerx + enemy.rect.centerx) // 2
+                        mid_y = (saw.rect.centery + enemy.rect.centery) // 2
+                        vfx.companion_zap(mid_x, mid_y, (255, 220, 100))
                         if dead:
                             sounds.play_hit()
                             trigger_shake(5, 4)
@@ -1563,6 +1568,9 @@ def run_game(class_key, starting_wave=1):
                         if now_t - last_zap > 1000:
                             enemy.health -= _roomba_damage
                             enemy._last_roomba_zap = now_t
+                            mid_x = (roomba.rect.centerx + enemy.rect.centerx) // 2
+                            mid_y = (roomba.rect.centery + enemy.rect.centery) // 2
+                            vfx.companion_zap(mid_x, mid_y, (0, 255, 255))
                             if enemy.health <= 0:
                                 handle_enemy_death(enemy, all_sprites, gems_grp, health_orbs_grp, gs.net_mode, gs.net_host, gold_grp)
                                 enemy.kill()
@@ -1962,6 +1970,18 @@ def run_game(class_key, starting_wave=1):
                                 orb.kill()
                                 break
 
+                elif msg_type == MSG_REVIVE:
+                    # A client wants to revive someone — relay to all and update host state
+                    revive_pid = data.get("player_id", -1)
+                    gs.net_host.broadcast(MSG_REVIVE, data)
+                    # Update ghost on host side
+                    if revive_pid in gs.remote_players:
+                        gs.remote_players[revive_pid].is_dead = False
+                    # Track so they can't be revived again this run
+                    if not hasattr(gs, '_was_revived'):
+                        gs._was_revived = set()
+                    gs._was_revived.add(revive_pid)
+
             # --- Host: update & broadcast remote player ghosts ---
             usernames = gs.net_host.get_usernames()
             for pid, state in gs.net_host.get_remote_states().items():
@@ -2012,6 +2032,15 @@ def run_game(class_key, starting_wave=1):
                                               "radius": getattr(s, 'orbit_radius', 50)})
                     if helper_states:
                         gs.net_client.send("helper_state", {"helpers": helper_states})
+
+                # Ping measurement (every ~120 frames = 2 sec at 60fps)
+                _ping_timer = getattr(run_game, '_ping_timer', 0) + 1
+                run_game._ping_timer = _ping_timer
+                if _ping_timer >= 120:
+                    run_game._ping_timer = 0
+                    import time as _time_mod
+                    gs._ping_send_time = _time_mod.perf_counter()
+                    gs.net_client.send(MSG_PING, {"time": gs._ping_send_time})
 
             # Flush any pending sends
             if hasattr(gs.net_client, '_flush_send'):
@@ -2151,6 +2180,37 @@ def run_game(class_key, starting_wave=1):
 
                 elif msg_type == MSG_SHAKE:
                     trigger_shake(data.get("f", 5), data.get("i", 4))
+
+                elif msg_type == MSG_PONG:
+                    import time as _time_mod
+                    send_t = getattr(gs, '_ping_send_time', None)
+                    if send_t is not None:
+                        gs._last_ping_ms = (_time_mod.perf_counter() - send_t) * 1000
+
+                elif msg_type == MSG_REVIVE:
+                    # Someone revived us or another player
+                    revive_pid = data.get("player_id", -1)
+                    revive_x = data.get("x", sw // 2)
+                    revive_y = data.get("y", sh // 2)
+                    if revive_pid == gs.net_client.my_id:
+                        # We're being revived!
+                        spectating = False
+                        player_obj.current_health = player_obj.stats["max_health"] // 2
+                        player_obj.rect.centerx = revive_x
+                        player_obj.rect.centery = revive_y
+                        # Re-add to sprite groups (kill() removed us)
+                        if not player_obj.alive():
+                            all_sprites.add(player_obj)
+                        # Brief invincibility after revive
+                        player_obj.last_hit = pygame.time.get_ticks() + 2000
+                        trigger_shake(10, 8)
+                        vfx.level_up_burst(revive_x, revive_y)
+                        print(f"[Revive] Revived at ({revive_x}, {revive_y}) with {player_obj.current_health} HP")
+                    else:
+                        # Another player was revived — update their ghost
+                        if revive_pid in gs.remote_players:
+                            ghost = gs.remote_players[revive_pid]
+                            ghost.is_dead = False
 
                 elif msg_type == "hat_drop":
                     # Host says a hat dropped — add to our collection too
@@ -2314,6 +2374,11 @@ def run_game(class_key, starting_wave=1):
                     gold_this_run, revivals_remaining)
             draw_boss_health_bar(surf, enemies_grp)
 
+            # FPS / Ping overlay
+            if settings_module.config.get("show_fps", False):
+                _ping_val = getattr(gs, '_last_ping_ms', None)
+                draw_fps_ping(surf, clock.get_fps(), _ping_val if gs.net_mode else None)
+
             # Dash cooldown bar (bottom-centre) - neon styled
             dash_ratio = player_obj.get_dash_cooldown_ratio()
             bar_w, bar_h = 140, 10
@@ -2335,7 +2400,9 @@ def run_game(class_key, starting_wave=1):
                 pygame.draw.line(surf, (min(255, bar_color[0] + 80), min(255, bar_color[1] + 80), min(255, bar_color[2] + 80)),
                                  (bar_x + ready_w - 1, bar_y + 1), (bar_x + ready_w - 1, bar_y + bar_h - 2))
             pygame.draw.rect(surf, bar_color, (bar_x, bar_y, bar_w, bar_h), 1)
-            dash_label = _gs.small_font.render("DASH [HOLD]" if dash_ratio == 0 else "DASH", True,
+            _kb = settings_module.config.get("keybinds", {})
+            _dash_key_name = pygame.key.name(_kb.get("dash", pygame.K_SPACE)).upper()
+            dash_label = _gs.small_font.render(f"DASH [{_dash_key_name}]" if dash_ratio == 0 else "DASH", True,
                                            (0, 255, 255) if dash_ratio == 0 else (80, 80, 100))
             surf.blit(dash_label, (bar_x + bar_w // 2 - dash_label.get_width() // 2, bar_y - 16))
 

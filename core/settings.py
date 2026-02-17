@@ -14,11 +14,13 @@ DEFAULT_CONFIG = {
     "music_volume": 0.5,
     "username": "Player",
     "mouse_move": False,
+    "show_fps": False,
     "keybinds": {},
     "gold": 0,
     "highest_wave": 1,
     "equipped_hat": None,
     "collected_hats": [],
+    "recent_servers": [],
     "perma_upgrades": {
         "roomba_count": 0,
         "roomba_speed": 0,
@@ -98,14 +100,104 @@ def save_config(cfg):
 
 config = load_config()
 
-SCREEN_WIDTH = config["resolution"][0]
-SCREEN_HEIGHT = config["resolution"][1]
+# ── Internal (render) resolution — ALWAYS 1920x1080 ──
+# pygame.SCALED handles stretching this to the actual window/monitor size.
+# All game logic, menus, HUD, fonts etc. work at this fixed resolution.
+INTERNAL_WIDTH = 1920
+INTERNAL_HEIGHT = 1080
+
+SCREEN_WIDTH = INTERNAL_WIDTH
+SCREEN_HEIGHT = INTERNAL_HEIGHT
 FPS = config.get("fps", 60)
+
+# ── UI Scale Factors (kept for compatibility but always 1.0) ──
+_REF_W = 1920
+_REF_H = 1080
+sx = 1.0
+sy = 1.0
+su = 1.0
+
+def recompute_scale():
+    """No-op: internal resolution is always 1920x1080."""
+    pass
+
+def S(val):
+    """Scale a pixel value uniformly. Identity at fixed internal res."""
+    return max(1, int(val))
+
+def Sx(val):
+    """Scale a pixel value horizontally. Identity at fixed internal res."""
+    return int(val)
+
+def Sy(val):
+    """Scale a pixel value vertically. Identity at fixed internal res."""
+    return int(val)
+
+
+# ── Monitor detection ──
+_max_monitor_res = None
+_max_monitor_refresh = None
+
+def get_max_monitor_resolution():
+    """Detect the maximum resolution and refresh rate the primary monitor supports."""
+    global _max_monitor_res, _max_monitor_refresh
+    if _max_monitor_res is not None:
+        return _max_monitor_res, _max_monitor_refresh
+
+    import pygame
+    try:
+        # pygame.display.get_desktop_sizes() returns list of (w,h) for each display
+        if hasattr(pygame.display, 'get_desktop_sizes'):
+            sizes = pygame.display.get_desktop_sizes()
+            if sizes:
+                _max_monitor_res = sizes[0]  # primary monitor
+        if _max_monitor_res is None:
+            # Fallback: pygame.display.Info()
+            info = pygame.display.Info()
+            _max_monitor_res = (info.current_w, info.current_h)
+    except Exception:
+        _max_monitor_res = (1920, 1080)
+
+    # Refresh rate: try multiple methods
+    _max_monitor_refresh = 60  # safe default
+    try:
+        # pygame 2.x: list_modes can give refresh rates on some platforms
+        # Best approach: check all available display modes
+        modes = pygame.display.list_modes()
+        if modes and modes != -1:
+            # modes is a list of (w,h) — doesn't include refresh rate directly
+            pass
+
+        # Try the SDL-level approach via display info
+        # On many systems, we can't detect refresh rate from pygame alone.
+        # Use a generous default: if the monitor supports high res, assume high refresh is possible.
+        # We'll just not filter FPS at all — let users pick any FPS option.
+        _max_monitor_refresh = 0  # 0 = don't filter, allow all FPS options
+    except Exception:
+        _max_monitor_refresh = 0
+
+    return _max_monitor_res, _max_monitor_refresh
+
+
+def get_available_resolutions():
+    """Return RESOLUTIONS filtered to only those <= the monitor's native res."""
+    max_res, _ = get_max_monitor_resolution()
+    max_w, max_h = max_res
+    available = [r for r in RESOLUTIONS if r[0] <= max_w and r[1] <= max_h]
+    # Always include at least the internal resolution
+    if not available:
+        available = [(INTERNAL_WIDTH, INTERNAL_HEIGHT)]
+    return available
+
+
+def get_available_fps_options():
+    """Return all FPS options (refresh rate detection is unreliable in pygame)."""
+    return FPS_OPTIONS, FPS_LABELS
 
 # Delta time: normalize game speed to 60fps baseline
 # At 60fps dt=1.0, at 120fps dt=0.5, etc.
 FPS_OPTIONS = [30, 60, 75, 90, 120, 144, 165, 180, 240, 0]  # 0 = unlimited
-FPS_LABELS = ["30", "60", "75", "90", "120", "144", "165", "180", "240", "∞"]
+FPS_LABELS = ["30", "60", "75", "90", "120", "144", "165", "180", "240", "Inf"]
 
 RESOLUTIONS = [
     (800, 600),
@@ -170,17 +262,17 @@ UPGRADE_POOL = [
 
 # Big Upgrade Pool (every 5 levels)
 BIG_UPGRADE_POOL = [
-    {"key": "big_speed",        "name": "★ Move Speed +3",            "desc": "Major speed boost"},
-    {"key": "big_fire_rate",    "name": "★ Fire Rate +30%",           "desc": "Much faster shooting"},
-    {"key": "big_bullet_speed", "name": "★ Bullet Speed +5",          "desc": "Blazing bullets"},
-    {"key": "big_max_health",   "name": "★ Max HP +50 & Full Heal",   "desc": "Tank up completely"},
-    {"key": "big_multishot",    "name": "★ Multishot +2",             "desc": "Spray and pray"},
-    {"key": "big_damage",       "name": "★ Damage +3",                "desc": "Massive damage boost"},
-    {"key": "big_piercing",     "name": "★ Piercing +3",              "desc": "Bullets shred through"},
-    {"key": "big_magnet",       "name": "★ Magnet +150px",            "desc": "Vacuum everything"},
-    {"key": "big_bullet_size",  "name": "★ Bullet Size +80%",         "desc": "Massive projectiles, +1 damage"},
-    {"key": "big_xp_gain",      "name": "★ XP Gain +75%",             "desc": "Turbo leveling"},
-    {"key": "big_accuracy",     "name": "★ Laser Accuracy",           "desc": "Extremely tight cone spread"},
+    {"key": "big_speed",        "name": "* Move Speed +3",            "desc": "Major speed boost"},
+    {"key": "big_fire_rate",    "name": "* Fire Rate +30%",           "desc": "Much faster shooting"},
+    {"key": "big_bullet_speed", "name": "* Bullet Speed +5",          "desc": "Blazing bullets"},
+    {"key": "big_max_health",   "name": "* Max HP +50 & Full Heal",   "desc": "Tank up completely"},
+    {"key": "big_multishot",    "name": "* Multishot +2",             "desc": "Spray and pray"},
+    {"key": "big_damage",       "name": "* Damage +3",                "desc": "Massive damage boost"},
+    {"key": "big_piercing",     "name": "* Piercing +3",              "desc": "Bullets shred through"},
+    {"key": "big_magnet",       "name": "* Magnet +150px",            "desc": "Vacuum everything"},
+    {"key": "big_bullet_size",  "name": "* Bullet Size +80%",         "desc": "Massive projectiles, +1 damage"},
+    {"key": "big_xp_gain",      "name": "* XP Gain +75%",             "desc": "Turbo leveling"},
+    {"key": "big_accuracy",     "name": "* Pinpoint Accuracy",       "desc": "Extremely tight cone spread"},
 ]
 
 # Per-class special upgrades — only appear for matching class
@@ -213,22 +305,22 @@ CLASS_UPGRADES = {
 
 BIG_CLASS_UPGRADES = {
     "default": [
-        {"key": "big_balanced",    "name": "★ Omni Boost",        "desc": "All stats +3, +20 HP"},
+        {"key": "big_balanced",    "name": "* Omni Boost",        "desc": "All stats +3, +20 HP"},
     ],
     "tank": [
-        {"key": "big_ram",         "name": "★ Juggernaut Rush",   "desc": "Ram damage x2, +100 HP"},
+        {"key": "big_ram",         "name": "* Juggernaut Rush",   "desc": "Ram damage x2, +100 HP"},
     ],
     "laser": [
-        {"key": "big_beam",        "name": "★ Mega Beam",         "desc": "Beam width x2, +2 chains, +3 dmg"},
+        {"key": "big_beam",        "name": "* Mega Beam",         "desc": "Beam width x2, +2 chains, +3 dmg"},
     ],
     "gunner": [
-        {"key": "big_storm",       "name": "★ Lead Rain",         "desc": "+4 multishot, +40% fire rate"},
+        {"key": "big_storm",       "name": "* Lead Rain",         "desc": "+4 multishot, +40% fire rate"},
     ],
     "sniper": [
-        {"key": "big_snipe",       "name": "★ Assassinate",       "desc": "+100% crit damage, +3 piercing"},
+        {"key": "big_snipe",       "name": "* Assassinate",       "desc": "+100% crit damage, +3 piercing"},
     ],
     "paladin": [
-        {"key": "big_divine",      "name": "★ Divine Wrath",      "desc": "+80 HP, heal 5 HP/sec, +2 damage"},
+        {"key": "big_divine",      "name": "* Divine Wrath",      "desc": "+80 HP, heal 5 HP/sec, +2 damage"},
     ],
 }
 CLASS_INFO = {

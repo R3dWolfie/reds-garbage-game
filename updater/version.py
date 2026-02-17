@@ -1,3 +1,6 @@
 GAME_NAME = "Red's Garbage Game"
-VERSION = "0.2.1.7"
+VERSION = "0.3.0"
 VERSION_URL = "https://updates.r3dwolfie.com/api/version"
+LOBBY_URL = "https://updates.r3dwolfie.com/api/lobby"
+RELAY_HOST = "updates.r3dwolfie.com"
+RELAY_PORT = 27020

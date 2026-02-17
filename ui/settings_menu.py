@@ -4,7 +4,8 @@
 import pygame, sys, math
 from core.settings import *
 import core.settings as settings_module
-from core.game_state import display_mgr, clock, menu_font, header_font, small_font, title_font, desc_font, gs
+import core.game_state as _gs
+from core.game_state import display_mgr, clock, gs
 from ui.username_input import show_username_input
 
 ACCENT = (0, 200, 255)
@@ -59,9 +60,11 @@ class SettingsMenu:
 
     def _sync_indices(self):
         current_res = tuple(self.dm.config["resolution"])
-        self.res_index = RESOLUTIONS.index(current_res) if current_res in RESOLUTIONS else 5
+        avail_res = settings_module.get_available_resolutions()
+        self.res_index = avail_res.index(current_res) if current_res in avail_res else len(avail_res) - 1
         fps = self.dm.config.get("fps", 60)
-        self.fps_index = FPS_OPTIONS.index(fps) if fps in FPS_OPTIONS else 1
+        avail_fps, _ = settings_module.get_available_fps_options()
+        self.fps_index = avail_fps.index(fps) if fps in avail_fps else 0
 
     def _get_window_mode(self):
         if self.dm.config.get("fullscreen", False): return 2
@@ -72,6 +75,7 @@ class SettingsMenu:
         self.dm.config["fullscreen"] = (idx == 2)
         self.dm.config["borderless"] = (idx == 1)
         self.dm.apply()
+        clock.tick(settings_module.FPS or 60)  # Reset clock to prevent dt spike
 
     def _get_keybinds(self):
         return settings_module.config.get("keybinds", DEFAULT_KEYBINDS.copy())
@@ -99,7 +103,7 @@ class SettingsMenu:
         hov = r.collidepoint(mx, my)
         c = ACCENT if hov else TEXT_DIM
         pygame.draw.rect(surf, c, r, 1 if not hov else 2, border_radius=5)
-        t = small_font.render("< Back", True, TEXT_BRIGHT if hov else TEXT_MID)
+        t = _gs.small_font.render("< Back", True, TEXT_BRIGHT if hov else TEXT_MID)
         surf.blit(t, (r.centerx - t.get_width()//2, r.centery - t.get_height()//2))
         return r
 
@@ -113,15 +117,15 @@ class SettingsMenu:
             dark.set_alpha(200)
             surf.blit(dark, (rect.x + 2, rect.y + 2))
             pygame.draw.rect(surf, ACCENT, rect, 2, border_radius=5)
-            txt = menu_font.render(text, True, ACCENT)
+            txt = _gs.menu_font.render(text, True, ACCENT)
         elif hov:
             pygame.draw.rect(surf, (25, 30, 50), rect, 0, border_radius=5)
             pygame.draw.rect(surf, ACCENT, rect, 1, border_radius=5)
-            txt = menu_font.render(text, True, TEXT_BRIGHT)
+            txt = _gs.menu_font.render(text, True, TEXT_BRIGHT)
         else:
             pygame.draw.rect(surf, (20, 22, 38), rect, 0, border_radius=5)
             pygame.draw.rect(surf, BORDER, rect, 1, border_radius=5)
-            txt = menu_font.render(text, True, TEXT_MID)
+            txt = _gs.menu_font.render(text, True, TEXT_MID)
         surf.blit(txt, (rect.centerx - txt.get_width()//2, rect.centery - txt.get_height()//2))
         return hov
 
@@ -133,14 +137,14 @@ class SettingsMenu:
         else:
             pygame.draw.rect(surf, (15, 17, 30), rect, 0, border_radius=5)
         pygame.draw.rect(surf, c, rect, 1 if not hov else 2, border_radius=5)
-        txt = small_font.render(text, True, c if not hov else TEXT_BRIGHT)
+        txt = _gs.small_font.render(text, True, c if not hov else TEXT_BRIGHT)
         surf.blit(txt, (rect.centerx - txt.get_width()//2, rect.centery - txt.get_height()//2))
         return hov
 
     def _slider(self, surf, x, y, width, value, label, key, mx, my):
-        lt = small_font.render(label, True, TEXT_MID)
+        lt = _gs.small_font.render(label, True, TEXT_MID)
         pct = int(value * 100)
-        vt = small_font.render(f"{pct}%", True, ACCENT)
+        vt = _gs.small_font.render(f"{pct}%", True, ACCENT)
         surf.blit(lt, (x, y))
         surf.blit(vt, (x + width - vt.get_width(), y))
         ty = y + 22; th = 8
@@ -156,7 +160,7 @@ class SettingsMenu:
         return tr, key
 
     def _selector(self, surf, x, y, width, label, value_str, mx, my):
-        lt = small_font.render(label, True, TEXT_DIM)
+        lt = _gs.small_font.render(label, True, TEXT_DIM)
         surf.blit(lt, (x, y))
         y += 20
         # Left arrow
@@ -164,17 +168,17 @@ class SettingsMenu:
         lhov = left_r.collidepoint(mx, my)
         pygame.draw.rect(surf, (25, 30, 50) if lhov else (20, 22, 38), left_r, 0, border_radius=4)
         pygame.draw.rect(surf, ACCENT if lhov else BORDER, left_r, 1, border_radius=4)
-        lt2 = menu_font.render("<", True, ACCENT if lhov else TEXT_MID)
+        lt2 = _gs.menu_font.render("<", True, ACCENT if lhov else TEXT_MID)
         surf.blit(lt2, (left_r.centerx - lt2.get_width()//2, left_r.centery - lt2.get_height()//2))
         # Value
-        vt = menu_font.render(value_str, True, TEXT_BRIGHT)
+        vt = _gs.menu_font.render(value_str, True, TEXT_BRIGHT)
         surf.blit(vt, (x + 42 + (width - 120)//2 - vt.get_width()//2, y + 3))
         # Right arrow
         right_r = pygame.Rect(x + width - 34, y, 34, 30)
         rhov = right_r.collidepoint(mx, my)
         pygame.draw.rect(surf, (25, 30, 50) if rhov else (20, 22, 38), right_r, 0, border_radius=4)
         pygame.draw.rect(surf, ACCENT if rhov else BORDER, right_r, 1, border_radius=4)
-        rt = menu_font.render(">", True, ACCENT if rhov else TEXT_MID)
+        rt = _gs.menu_font.render(">", True, ACCENT if rhov else TEXT_MID)
         surf.blit(rt, (right_r.centerx - rt.get_width()//2, right_r.centery - rt.get_height()//2))
         return left_r, right_r
 
@@ -220,16 +224,20 @@ class SettingsMenu:
                             self.rebinding = None
                     # Resolution
                     if res_left.collidepoint(mx, my):
-                        self.res_index = (self.res_index - 1) % len(RESOLUTIONS)
+                        avail_res = settings_module.get_available_resolutions()
+                        self.res_index = (self.res_index - 1) % len(avail_res)
                     if res_right.collidepoint(mx, my):
-                        self.res_index = (self.res_index + 1) % len(RESOLUTIONS)
+                        avail_res = settings_module.get_available_resolutions()
+                        self.res_index = (self.res_index + 1) % len(avail_res)
                     # FPS
                     if fps_left.collidepoint(mx, my):
-                        self.fps_index = (self.fps_index - 1) % len(FPS_OPTIONS)
-                        self.dm.set_fps(FPS_OPTIONS[self.fps_index])
+                        avail_fps, _ = settings_module.get_available_fps_options()
+                        self.fps_index = (self.fps_index - 1) % len(avail_fps)
+                        self.dm.set_fps(avail_fps[self.fps_index])
                     if fps_right.collidepoint(mx, my):
-                        self.fps_index = (self.fps_index + 1) % len(FPS_OPTIONS)
-                        self.dm.set_fps(FPS_OPTIONS[self.fps_index])
+                        avail_fps, _ = settings_module.get_available_fps_options()
+                        self.fps_index = (self.fps_index + 1) % len(avail_fps)
+                        self.dm.set_fps(avail_fps[self.fps_index])
                     # Window mode
                     if wm_left.collidepoint(mx, my):
                         self._set_window_mode((self._get_window_mode() - 1) % 3)
@@ -237,14 +245,20 @@ class SettingsMenu:
                         self._set_window_mode((self._get_window_mode() + 1) % 3)
                     # Apply resolution
                     if apply_r.collidepoint(mx, my):
-                        self.dm.set_resolution(RESOLUTIONS[self.res_index])
+                        avail_res = settings_module.get_available_resolutions()
+                        self.dm.set_resolution(avail_res[self.res_index])
                         settings_module.save_config(self.dm.config)
+                        clock.tick(settings_module.FPS or 60)  # Reset clock to prevent dt spike
                     # VSync
                     if vsync_r.collidepoint(mx, my):
                         self.dm.set_vsync(not self.dm.config.get("vsync", False))
+                        clock.tick(settings_module.FPS or 60)
                     # Mouse
                     if mouse_r.collidepoint(mx, my):
                         settings_module.config["mouse_move"] = not settings_module.config.get("mouse_move", False)
+                    # FPS Counter
+                    if fps_r.collidepoint(mx, my):
+                        settings_module.config["show_fps"] = not settings_module.config.get("show_fps", False)
                     # Username
                     if username_r.collidepoint(mx, my):
                         show_username_input()
@@ -283,7 +297,7 @@ class SettingsMenu:
             pygame.draw.rect(surf, BORDER, (px, py, pw, ph), 1, border_radius=10)
 
             # Title
-            tt = menu_font.render("SETTINGS", True, TEXT_BRIGHT)
+            tt = _gs.menu_font.render("SETTINGS", True, TEXT_BRIGHT)
             surf.blit(tt, (sw//2 - tt.get_width()//2, py + 16))
 
             # Back button (top-left)
@@ -309,35 +323,41 @@ class SettingsMenu:
             # Reset all interaction rects to avoid stale clicks
             res_left = res_right = fps_left = fps_right = pygame.Rect(0, 0, 0, 0)
             wm_left = wm_right = pygame.Rect(0, 0, 0, 0)
-            vsync_r = mouse_r = username_r = apply_r = pygame.Rect(0, 0, 0, 0)
+            vsync_r = mouse_r = username_r = apply_r = fps_r = pygame.Rect(0, 0, 0, 0)
 
             if self.category == "general":
                 # Username
                 uname = gs.local_username
-                lbl = small_font.render("USERNAME", True, TEXT_DIM)
+                lbl = _gs.small_font.render("USERNAME", True, TEXT_DIM)
                 surf.blit(lbl, (cx, cy)); cy += 22
                 username_r = pygame.Rect(cx, cy, content_w, 38)
                 hov = username_r.collidepoint(mx, my)
                 pygame.draw.rect(surf, (25, 30, 50) if hov else (18, 20, 35), username_r, 0, border_radius=5)
                 pygame.draw.rect(surf, ACCENT if hov else BORDER, username_r, 1 if not hov else 2, border_radius=5)
-                uv = menu_font.render(uname, True, ACCENT)
+                uv = _gs.menu_font.render(uname, True, ACCENT)
                 surf.blit(uv, (cx + 14, cy + 8))
-                hint = desc_font.render("Click to change", True, TEXT_DIM)
+                hint = _gs.desc_font.render("Click to change", True, TEXT_DIM)
                 surf.blit(hint, (cx + content_w - hint.get_width() - 14, cy + 12))
 
             elif self.category == "display":
-                # Resolution selector
-                res_str = f"{RESOLUTIONS[self.res_index][0]} x {RESOLUTIONS[self.res_index][1]}"
+                # Resolution selector (filtered to monitor max)
+                avail_res = settings_module.get_available_resolutions()
+                if self.res_index >= len(avail_res):
+                    self.res_index = len(avail_res) - 1
+                res_str = f"{avail_res[self.res_index][0]} x {avail_res[self.res_index][1]}"
                 res_left, res_right = self._selector(surf, cx, cy, content_w - 100, "RESOLUTION", res_str, mx, my)
                 apply_r = pygame.Rect(cx + content_w - 80, cy + 18, 80, 32)
                 self._btn(surf, apply_r, "Apply", mx, my)
                 cy += 60
 
-                # FPS selector
-                fps_label = FPS_LABELS[self.fps_index]
+                # FPS selector (filtered to monitor refresh)
+                avail_fps, avail_fps_labels = settings_module.get_available_fps_options()
+                if self.fps_index >= len(avail_fps):
+                    self.fps_index = len(avail_fps) - 1
+                fps_label = avail_fps_labels[self.fps_index]
                 fps_left, fps_right = self._selector(surf, cx, cy, content_w//2, "FPS LIMIT", fps_label, mx, my)
                 actual_fps = int(clock.get_fps())
-                fps_txt = small_font.render(f"Current: {actual_fps} fps", True, TEXT_DIM)
+                fps_txt = _gs.small_font.render(f"Current: {actual_fps} fps", True, TEXT_DIM)
                 surf.blit(fps_txt, (cx + content_w//2 + 30, cy + 22))
                 cy += 60
 
@@ -355,6 +375,12 @@ class SettingsMenu:
                 mo_on = settings_module.config.get("mouse_move", False)
                 mouse_r = pygame.Rect(cx + content_w//2 + 8, cy, content_w//2 - 8, 36)
                 self._toggle_btn(surf, mouse_r, f"Mouse Aim: {'On' if mo_on else 'Off'}", mo_on, mx, my)
+                cy += 44
+
+                # FPS Counter toggle
+                fps_on = settings_module.config.get("show_fps", False)
+                fps_r = pygame.Rect(cx, cy, content_w//2 - 8, 36)
+                self._toggle_btn(surf, fps_r, f"FPS Counter: {'On' if fps_on else 'Off'}", fps_on, mx, my)
 
             elif self.category == "audio":
                 labels = ["Master Volume", "SFX Volume", "Music Volume"]
@@ -367,13 +393,13 @@ class SettingsMenu:
 
             elif self.category == "controls":
                 # Keybinds header
-                sep = small_font.render("KEYBINDS", True, TEXT_DIM)
+                sep = _gs.small_font.render("KEYBINDS", True, TEXT_DIM)
                 surf.blit(sep, (cx, cy))
                 cy += 24
 
                 # Rebind hint
                 if self.rebinding:
-                    hint = desc_font.render(f"Press a key for '{KEYBIND_LABELS.get(self.rebinding, self.rebinding)}'...", True, (255, 200, 50))
+                    hint = _gs.desc_font.render(f"Press a key for '{KEYBIND_LABELS.get(self.rebinding, self.rebinding)}'...", True, (255, 200, 50))
                     surf.blit(hint, (cx, cy))
                     cy += 22
 
@@ -391,11 +417,11 @@ class SettingsMenu:
                     elif hov:
                         pygame.draw.rect(surf, (22, 25, 42), row_r, 0, border_radius=4)
 
-                    at = small_font.render(label, True, TEXT_BRIGHT if hov or is_rebinding else TEXT_MID)
+                    at = _gs.small_font.render(label, True, TEXT_BRIGHT if hov or is_rebinding else TEXT_MID)
                     if is_rebinding:
-                        kt = small_font.render("...", True, (255, 200, 50))
+                        kt = _gs.small_font.render("...", True, (255, 200, 50))
                     else:
-                        kt = small_font.render(_key_name(keycode), True, ACCENT)
+                        kt = _gs.small_font.render(_key_name(keycode), True, ACCENT)
                     surf.blit(at, (cx + 12, cy + 5))
                     surf.blit(kt, (cx + content_w - kt.get_width() - 12, cy + 5))
                     cy += 32
@@ -405,7 +431,7 @@ class SettingsMenu:
                 rhov = reset_r.collidepoint(mx, my)
                 pygame.draw.rect(surf, (25, 30, 50) if rhov else (18, 20, 35), reset_r, 0, border_radius=5)
                 pygame.draw.rect(surf, (255, 80, 80) if rhov else BORDER, reset_r, 1, border_radius=5)
-                rt = small_font.render("Reset Defaults", True, (255, 80, 80) if rhov else TEXT_DIM)
+                rt = _gs.small_font.render("Reset Defaults", True, (255, 80, 80) if rhov else TEXT_DIM)
                 surf.blit(rt, (reset_r.centerx - rt.get_width()//2, reset_r.centery - rt.get_height()//2))
                 keybind_rects["__reset__"] = reset_r
 

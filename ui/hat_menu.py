@@ -4,9 +4,8 @@
 import pygame, sys, math
 import core.settings as settings_module
 from core.settings import HAT_DEFS, RARITY_COLORS, save_config
-from core.game_state import (
-    display_mgr, clock, small_font, menu_font, header_font, desc_font, title_font
-)
+import core.game_state as _gs
+from core.game_state import display_mgr, clock
 
 # ── Shared colors ──
 ACCENT = (0, 200, 255)
@@ -251,7 +250,7 @@ def _back_btn(surf, mx, my):
     hov = r.collidepoint(mx, my)
     c = ACCENT if hov else TEXT_DIM
     pygame.draw.rect(surf, c, r, 1 if not hov else 2, border_radius=5)
-    t = small_font.render("< Back", True, TEXT_BRIGHT if hov else TEXT_MID)
+    t = _gs.small_font.render("< Back", True, TEXT_BRIGHT if hov else TEXT_MID)
     surf.blit(t, (r.centerx - t.get_width()//2, r.centery - t.get_height()//2))
     return r
 
@@ -277,13 +276,13 @@ def show_hat_menu():
         back_r = _back_btn(surf, mx, my)
 
         # ── Title ──
-        tt = menu_font.render("COSMETICS", True, TEXT_BRIGHT)
+        tt = _gs.menu_font.render("COSMETICS", True, TEXT_BRIGHT)
         surf.blit(tt, (sw//2 - tt.get_width()//2, 20))
 
         # ── Collected count (top-right) ──
         count = sum(1 for h in hats if h["id"] in collected)
         total = len(hats)
-        ct = small_font.render(f"{count}/{total} collected", True, TEXT_DIM)
+        ct = _gs.small_font.render(f"{count}/{total} collected", True, TEXT_DIM)
         surf.blit(ct, (sw - ct.get_width() - 20, 24))
 
         # ── Grid ──
@@ -335,31 +334,31 @@ def show_hat_menu():
 
             # Equipped badge
             if is_eq:
-                eb = desc_font.render("EQUIPPED", True, rc)
+                eb = _gs.desc_font.render("EQUIPPED", True, rc)
                 surf.blit(eb, (cx + card_w//2 - eb.get_width()//2, cy + 3))
 
             if owned:
                 # Hat preview
                 _draw_hat_preview(surf, cx + card_w//2, cy + 42, hat["id"], hat.get("color"), sz=30)
                 # Name
-                nt = small_font.render(hat["name"], True, rc)
+                nt = _gs.small_font.render(hat["name"], True, rc)
                 surf.blit(nt, (cx + card_w//2 - nt.get_width()//2, cy + 62))
                 # Rarity
-                rt = desc_font.render(hat["rarity"].upper(), True, rc)
+                rt = _gs.desc_font.render(hat["rarity"].upper(), True, rc)
                 surf.blit(rt, (cx + card_w//2 - rt.get_width()//2, cy + 80))
                 # Animated/FX badge for exotic
                 if hat.get("anim") and hat["rarity"] == "exotic":
-                    ab = desc_font.render("★ FX", True, (255, 100, 140))
+                    ab = _gs.desc_font.render("* FX", True, (255, 100, 140))
                     surf.blit(ab, (cx + card_w - ab.get_width() - 4, cy + 3))
                 elif hat.get("anim"):
-                    ab = desc_font.render("★", True, (255, 255, 100))
+                    ab = _gs.desc_font.render("*", True, (255, 255, 100))
                     surf.blit(ab, (cx + card_w - ab.get_width() - 4, cy + 3))
             else:
                 # Locked — dim, no plus signs
                 pygame.draw.circle(surf, (30, 32, 48), (cx + card_w//2, cy + 40), 10, 1)
-                lt = desc_font.render("???", True, (40, 42, 58))
+                lt = _gs.desc_font.render("???", True, (40, 42, 58))
                 surf.blit(lt, (cx + card_w//2 - lt.get_width()//2, cy + 62))
-                rt = desc_font.render(hat["rarity"].upper(), True, (35, 38, 52))
+                rt = _gs.desc_font.render(hat["rarity"].upper(), True, (35, 38, 52))
                 surf.blit(rt, (cx + card_w//2 - rt.get_width()//2, cy + 80))
 
         # Scroll indicator
@@ -377,12 +376,12 @@ def show_hat_menu():
             eq_hat = next((h for h in hats if h["id"] == equipped), None)
             if eq_hat:
                 eq_rc = RARITY_COLORS.get(eq_hat["rarity"], TEXT_MID)
-                eq_txt = small_font.render(f"Equipped: {eq_hat['name']}", True, eq_rc)
+                eq_txt = _gs.small_font.render(f"Equipped: {eq_hat['name']}", True, eq_rc)
                 surf.blit(eq_txt, (20, bottom_y))
-                hint = desc_font.render("Click equipped hat to unequip", True, TEXT_DIM)
+                hint = _gs.desc_font.render("Click equipped hat to unequip", True, TEXT_DIM)
                 surf.blit(hint, (sw - hint.get_width() - 20, bottom_y + 4))
         else:
-            nt = small_font.render("No hat equipped", True, TEXT_DIM)
+            nt = _gs.small_font.render("No hat equipped", True, TEXT_DIM)
             surf.blit(nt, (20, bottom_y))
 
         display_mgr.present()

@@ -36,9 +36,59 @@ _STAT_MAP = {
     "heal": ("HEAL", (100,255,150)),
     "beam_bounce": ("CHAIN", (255,80,80)),
     "beam_width": ("WIDTH", (255,80,80)),
+    "revive_ally": ("REVIVE", (255,215,0)),
 }
 
 _auto_upgrade_on = False
+
+
+def _do_revive(player_obj):
+    """Broadcast MSG_REVIVE for the nearest dead remote player."""
+    from networking.net_common import MSG_REVIVE
+    if not hasattr(gs, '_was_revived'):
+        gs._was_revived = set()
+
+    # Find dead players
+    dead_players = []
+    px, py = player_obj.rect.centerx, player_obj.rect.centery
+
+    # Check remote_players (ghosts with is_dead)
+    for pid, ghost in getattr(gs, 'remote_players', {}).items():
+        is_dead = getattr(ghost, 'is_dead', False)
+        if is_dead and pid not in gs._was_revived:
+            gx = getattr(ghost, 'x', 0) or (ghost.rect.centerx if hasattr(ghost, 'rect') else 0)
+            gy = getattr(ghost, 'y', 0) or (ghost.rect.centery if hasattr(ghost, 'rect') else 0)
+            dist = ((px - gx) ** 2 + (py - gy) ** 2) ** 0.5
+            dead_players.append((pid, dist))
+
+    # Also check host's remote states
+    if gs.net_host:
+        for pid, st in gs.net_host.get_remote_states().items():
+            if st.get('is_dead', False) and pid not in gs._was_revived:
+                gx, gy = st.get('x', 0), st.get('y', 0)
+                dist = ((px - gx) ** 2 + (py - gy) ** 2) ** 0.5
+                # Avoid duplicates
+                if not any(p[0] == pid for p in dead_players):
+                    dead_players.append((pid, dist))
+
+    if not dead_players:
+        return
+
+    # Pick nearest
+    dead_players.sort(key=lambda x: x[1])
+    target_pid = dead_players[0][0]
+    gs._was_revived.add(target_pid)
+
+    revive_data = {
+        "player_id": target_pid,
+        "x": px,
+        "y": py,
+    }
+
+    if gs.net_host:
+        gs.net_host.broadcast(MSG_REVIVE, revive_data)
+    elif gs.net_client:
+        gs.net_client.send(MSG_REVIVE, revive_data)
 
 def _draw_upgrade_icon(surf, cx, cy, key, color, r=14):
     base = key.replace("big_","")
@@ -79,6 +129,11 @@ def _draw_upgrade_icon(surf, cx, cy, key, color, r=14):
     elif base == "accuracy":
         pygame.draw.circle(surf, color, (cx,cy), r//2, 2)
         pygame.draw.circle(surf, color, (cx,cy), 2)
+    elif base == "revive_ally":
+        # Heart / cross combo
+        pygame.draw.rect(surf, color, (cx-2,cy-r//2,4,r), border_radius=1)
+        pygame.draw.rect(surf, color, (cx-r//2,cy-2,r,4), border_radius=1)
+        pygame.draw.circle(surf, (255,215,0), (cx,cy-r//3), 3, 1)
     else:
         pygame.draw.circle(surf, color, (cx,cy), r//2, 2)
         pygame.draw.circle(surf, color, (cx,cy), 3)
@@ -124,7 +179,8 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
 
     weapon = player_obj.get_weapon_type()
     if weapon == "beam":
-        pool = [u for u in pool if "piercing" not in u["key"] and "multishot" not in u["key"]]
+        _beam_skip = ("piercing", "multishot", "bullet_size", "bullet_speed", "accuracy")
+        pool = [u for u in pool if not any(sk in u["key"] for sk in _beam_skip)]
 
     # Remove upgrades that have hit their cap
     s = player_obj.stats
@@ -134,6 +190,24 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
         pool = [u for u in pool if "bullet_size" not in u["key"]]
     if s.get("multishot", 1) >= 10:
         pool = [u for u in pool if "multishot" not in u["key"]]
+
+    # Revive Ally — only in multiplayer when a teammate is dead and not yet revived
+    if gs.net_mode is not None and not is_big:
+        _revived_set = getattr(gs, '_was_revived', set())
+        _any_dead = False
+        for pid, state in getattr(gs, 'remote_players', {}).items():
+            if getattr(state, 'is_dead', False) or (isinstance(state, dict) and state.get('is_dead', False)):
+                if pid not in _revived_set:
+                    _any_dead = True
+                    break
+        # Also check remote_states from host
+        if not _any_dead and gs.net_host:
+            for pid, st in gs.net_host.get_remote_states().items():
+                if st.get('is_dead', False) and pid not in _revived_set:
+                    _any_dead = True
+                    break
+        if _any_dead:
+            pool.append({"key": "revive_ally", "name": "Revive Ally", "desc": "Bring a fallen ally back at half health", "_is_revive": True})
 
     weights = []
     for item in pool:
@@ -341,7 +415,12 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
         display_mgr.present()
 
         def _pick(idx):
-            player_obj.apply_upgrade(options[idx]["key"])
+            chosen = options[idx]
+            if chosen.get("_is_revive"):
+                # Find nearest dead remote player and revive them
+                _do_revive(player_obj)
+            else:
+                player_obj.apply_upgrade(chosen["key"])
             if net_mode == "client" and net_client:
                 gs.upgrade_paused_by = None
                 net_client.send(MSG_UPGRADE_DONE, {})

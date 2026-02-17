@@ -197,6 +197,27 @@ def wave_start_effect(sw, sh):
     _screen_flashes.append({"color": (0,200,255), "life": 4, "max_life": 4, "intensity": 0.03})
 
 
+def companion_zap(x, y, color=(0, 255, 255)):
+    """Small electric zap for roomba/saw companion hits. Lightweight."""
+    # 3-4 short radiating lines as spark particles
+    for _ in range(random.randint(3, 4)):
+        angle = random.uniform(0, math.pi * 2)
+        length = random.uniform(4, 8)
+        _particles.append({
+            "x": x, "y": y,
+            "dx": math.cos(angle) * length * 0.4,
+            "dy": math.sin(angle) * length * 0.4,
+            "color": color, "life": random.randint(5, 7), "max_life": 7,
+            "size": random.uniform(1.5, 2.5), "type": "spark",
+        })
+    # Tiny bright center spark
+    _particles.append({
+        "x": x, "y": y, "dx": 0, "dy": 0,
+        "color": (220, 255, 255), "life": 5, "max_life": 5,
+        "size": 2.5, "type": "sparkle",
+    })
+
+
 def damage_number(x, y, amount, is_crit=False):
     if len(_damage_nums) >= MAX_DAMAGE_NUMS:
         return  # Drop if too many

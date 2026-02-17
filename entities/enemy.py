@@ -86,7 +86,7 @@ class TankEnemy(Enemy):
     def update(self):
         super().update()
         if self.shoot_cooldown>0: self.shoot_cooldown-=self._dt
-    def can_shoot(self): return self.shoot_cooldown==0
+    def can_shoot(self): return self.shoot_cooldown<=0
     def shoot(self,tx=0,ty=0): self.shoot_cooldown=self.shoot_delay; return True
     def get_xp_drop_count(self): return max(3,3+self.max_health//10)
 
@@ -1043,7 +1043,7 @@ class Boss(Enemy):
     def update(self):
         super().update()
         if self.shoot_cooldown>0: self.shoot_cooldown-=self._dt
-    def can_shoot(self): return self.shoot_cooldown==0
+    def can_shoot(self): return self.shoot_cooldown<=0
     def shoot(self,tx=0,ty=0): self.shoot_cooldown=self.shoot_delay; return True
     def get_xp_drop_count(self): return max(10,10+self.max_health//5)
     def draw_health_bar(self, surf):

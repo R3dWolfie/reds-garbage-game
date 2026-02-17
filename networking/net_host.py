@@ -2,6 +2,7 @@
 """
 Host (P2P server) - one player hosts, others connect via IP.
 The host is authoritative over enemy spawning and wave progression.
+Supports both direct P2P and relay mode.
 """
 
 import socket
@@ -24,9 +25,13 @@ class GameHost:
         self.host_player_id = 0
         self.lobby_name = "Game"
         self.password = ""  # Empty = no password
+        # Relay mode
+        self._relay_mode = False
+        self._relay_sock = None
+        self._relay_code = None
 
     def start(self):
-        """Start listening for connections."""
+        """Start listening for connections (direct P2P mode)."""
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind(('0.0.0.0', self.port))
@@ -45,8 +50,102 @@ class GameHost:
         print(f"[Host] Server started on {local_ip}:{self.port}")
         return local_ip
 
+    def start_relay(self, relay_sock, room_code):
+        """Start in relay mode — use an existing relay socket instead of listening."""
+        self._relay_mode = True
+        self._relay_sock = relay_sock
+        self._relay_code = room_code
+        self.running = True
+
+        # In relay mode, data from ALL clients arrives on one socket.
+        # The relay server handles multiplexing — each client gets its own
+        # TCP connection to the relay, and the relay forwards to us.
+        # But from our side, it looks like one connection carrying all traffic.
+        # We treat the relay socket as a single "virtual client" pipe.
+        # Actually: the relay broadcasts our data to all clients and
+        # forwards each client's data to us. So we receive interleaved
+        # data from multiple clients on one socket.
+        # We still need to accept new clients — the relay will send
+        # the game protocol handshake data from each client through us.
+        # So we just treat the relay socket like we have one multiplexed client.
+
+        self.accept_thread = threading.Thread(target=self._relay_receive_loop, daemon=True)
+        self.accept_thread.start()
+
+        print(f"[Host] Relay mode started — room code: {room_code}")
+        return room_code
+
+    def _relay_receive_loop(self):
+        """Receive data from the relay socket (all clients multiplexed).
+
+        In relay mode, ALL client data arrives on one socket. The relay server
+        forwards each client's TCP stream to us merged together. Since our game
+        protocol is length-prefixed, messages are self-delimiting and we can
+        decode them from the combined stream.
+
+        We treat all relay clients as a single virtual client (relay_id=1).
+        The game protocol already handles multi-client state via player_id
+        fields in messages.
+        """
+        # Wait briefly for a client to actually connect before creating the virtual client
+        # The relay forwards client data as soon as they join
+        buf = b""
+        self._relay_sock.settimeout(1.0)
+        relay_id = None
+
+        while self.running:
+            try:
+                data = self._relay_sock.recv(BUFFER_SIZE)
+                if not data:
+                    break
+                buf += data
+                messages, buf = decode_messages(buf)
+
+                for msg in messages:
+                    # First message from a client through relay — create virtual client
+                    if relay_id is None:
+                        relay_id = self.next_id
+                        self.next_id += 1
+                        with self.lock:
+                            self.clients[relay_id] = {
+                                "socket": self._relay_sock,
+                                "buffer": b"",
+                                "name": f"Player {relay_id}",
+                                "username": f"Player{relay_id}",
+                                "state": {},
+                                "addr": ("relay", 0),
+                                "_is_relay": True,
+                            }
+                        # Send handshake back through relay
+                        handshake = encode_message(MSG_HANDSHAKE, {
+                            "your_id": relay_id,
+                            "host_id": self.host_player_id,
+                            "players": self._get_player_list(),
+                        })
+                        try:
+                            self._relay_sock.sendall(handshake)
+                        except:
+                            pass
+                        print(f"[Host] Relay client {relay_id} connected")
+
+                    msg["_from"] = relay_id
+                    self._handle_message(msg, relay_id)
+
+            except socket.timeout:
+                continue
+            except Exception as e:
+                if self.running:
+                    print(f"[Host] Relay receive error: {e}")
+                break
+
+        print("[Host] Relay connection lost")
+        if relay_id is not None:
+            self._disconnect_player(relay_id)
+
     def _beacon_loop(self):
         """Broadcast server info via UDP for LAN discovery."""
+        if self._relay_mode:
+            return  # No LAN beacon in relay mode
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)

@@ -54,6 +54,36 @@ class GameClient:
             self.connected = False
             return False
 
+    def connect_relay(self, relay_sock):
+        """Connect using an already-established relay socket.
+        The relay handshake is already done — socket is ready for game protocol."""
+        try:
+            self.socket = relay_sock
+            self.socket.settimeout(0.5)
+            self.running = True
+            self.connected = True
+
+            # Start receive thread
+            self.recv_thread = threading.Thread(target=self._receive_loop, daemon=True)
+            self.recv_thread.start()
+
+            # Wait for handshake from host (through relay)
+            start = time.time()
+            while self.my_id == -1 and time.time() - start < 10:
+                time.sleep(0.1)
+
+            if self.my_id == -1:
+                self.disconnect()
+                return False
+
+            print(f"[Client] Connected via relay as Player {self.my_id}")
+            return True
+
+        except Exception as e:
+            print(f"[Client] Relay connection failed: {e}")
+            self.connected = False
+            return False
+
     def disconnect(self):
         """Disconnect from the host."""
         self.running = False

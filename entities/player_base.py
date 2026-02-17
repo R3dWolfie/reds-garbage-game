@@ -249,7 +249,7 @@ class PlayerBase(pygame.sprite.Sprite):
             self.stats["speed"] += 1
             self.upgrade_counts["speed"] += 1
         elif upgrade_key == "fire_rate":
-            self.stats["fire_rate"] = max(1, int(self.stats["fire_rate"] * 0.9))
+            self.stats["fire_rate"] = max(1, round(self.stats["fire_rate"] * 0.9, 1))
             self.upgrade_counts["fire_rate"] += 1
         elif upgrade_key == "bullet_speed":
             self.stats["bullet_speed"] += 2
@@ -286,7 +286,7 @@ class PlayerBase(pygame.sprite.Sprite):
             self.stats["speed"] += 3
             self.upgrade_counts["speed"] += 3
         elif upgrade_key == "big_fire_rate":
-            self.stats["fire_rate"] = max(1, int(self.stats["fire_rate"] * 0.7))
+            self.stats["fire_rate"] = max(1, round(self.stats["fire_rate"] * 0.7, 1))
             self.upgrade_counts["fire_rate"] += 3
         elif upgrade_key == "big_bullet_speed":
             self.stats["bullet_speed"] += 5
@@ -354,13 +354,13 @@ class PlayerBase(pygame.sprite.Sprite):
         # Gunner
         elif upgrade_key == "bullet_storm":
             self.stats["multishot"] += 2
-            self.stats["fire_rate"] = max(1, int(self.stats["fire_rate"] * 0.8))
+            self.stats["fire_rate"] = max(1, round(self.stats["fire_rate"] * 0.8, 1))
         elif upgrade_key == "explosive_rounds":
             self.stats["damage"] += 1
             self.stats["piercing"] += 2
         elif upgrade_key == "big_storm":
             self.stats["multishot"] += 4
-            self.stats["fire_rate"] = max(1, int(self.stats["fire_rate"] * 0.6))
+            self.stats["fire_rate"] = max(1, round(self.stats["fire_rate"] * 0.6, 1))
 
         # Sniper
         elif upgrade_key == "headshot":

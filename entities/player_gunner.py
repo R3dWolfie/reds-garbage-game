@@ -20,7 +20,7 @@ class PlayerGunner(PlayerBase):
         "fire_rate": 14,        # Fast but not insane (was 12)
         "bullet_speed": 9,
         "max_health": 70,       # Fragile (was 80)
-        "multishot": 2,         # Starts with 2 bullets (was 3)
+        "multishot": 3,         # Starts with 3 bullets
         "damage": 0.4,          # Very low per-bullet (was 0.5)
         "piercing": 1,
         "magnet": 0,
