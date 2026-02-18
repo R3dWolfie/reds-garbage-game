@@ -30,6 +30,7 @@ class GameClient:
             self.socket.settimeout(timeout)
             self.socket.connect((host_ip, port))
             self.socket.settimeout(0.5)
+            configure_socket(self.socket)  # TCP_NODELAY + buffer sizes
             self.running = True
             self.connected = True
 
@@ -60,6 +61,7 @@ class GameClient:
         try:
             self.socket = relay_sock
             self.socket.settimeout(0.5)
+            configure_socket(self.socket)  # TCP_NODELAY
             self.running = True
             self.connected = True
 

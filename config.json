@@ -1,7 +1,7 @@
 {
   "resolution": [
-    3840,
-    2160
+    1920,
+    1080
   ],
   "fullscreen": true,
   "borderless": false,
@@ -12,7 +12,7 @@
   "music_volume": 0.5,
   "username": "Red",
   "mouse_move": true,
-  "gold": 1269,
+  "gold": 2701,
   "highest_wave": 20,
   "equipped_hat": "soulflame",
   "collected_hats": [
@@ -56,7 +56,11 @@
     "viking",
     "toxicmask",
     "thunderhelm",
-    "samurai"
+    "samurai",
+    "antlers",
+    "crown",
+    "shark",
+    "magichat"
   ],
   "perma_upgrades": {
     "roomba_count": 2,

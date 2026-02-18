@@ -55,6 +55,7 @@ class GameHost:
         """Start in relay mode — use an existing relay socket instead of listening."""
         self._relay_mode = True
         self._relay_sock = relay_sock
+        configure_socket(relay_sock)  # TCP_NODELAY
         self._relay_code = room_code
         self.running = True
 
@@ -262,6 +263,7 @@ class GameHost:
             try:
                 conn, addr = self.server_socket.accept()
                 conn.settimeout(0.5)
+                configure_socket(conn)  # TCP_NODELAY + buffer sizes
                 player_id = self.next_id
                 self.next_id += 1
 
@@ -423,13 +425,12 @@ class GameHost:
                 else:
                     direct_targets.append((pid, client["socket"]))
 
-        # Send to direct clients
+        # Send to direct clients — batch into single send per client
         dead = []
         for pid, sock in direct_targets:
             try:
                 sock.sendall(raw)
             except socket.timeout:
-                # Send buffer full, skip this message but don't kill the client
                 pass
             except (BrokenPipeError, ConnectionResetError, OSError) as e:
                 print(f"[Host] Player {pid} send failed: {type(e).__name__}: {e}")

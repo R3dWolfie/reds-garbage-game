@@ -214,11 +214,9 @@ class SpiralEnemy(Enemy):
     def __init__(self, player, wave):
         super().__init__(player, wave)
         sz = (26, 26); img = pygame.Surface(sz, pygame.SRCALPHA)
-        # Triangle shape
         pts = [(13, 0), (26, 22), (0, 22)]
         pygame.draw.polygon(img, (255, 80, 180), pts)
         pygame.draw.polygon(img, (255, 150, 220), pts, 2)
-        # Inner triangle
         pygame.draw.polygon(img, (255, 200, 240), [(13, 6), (21, 18), (5, 18)], 1)
         self.image = make_neon_sprite(img, (255, 80, 180), glow_size=3)
         self.rect = self.image.get_rect(); self._spawn_at_edge()
@@ -230,7 +228,6 @@ class SpiralEnemy(Enemy):
 
     def update(self):
         tx, ty = self._get_target()
-        # Spiral toward target
         self.spiral_angle += 0.08
         self.spiral_radius = max(20, self.spiral_radius - 0.3)
         goal_x = tx + math.cos(self.spiral_angle) * self.spiral_radius
@@ -247,6 +244,9 @@ class SpiralEnemy(Enemy):
             self.shoot_timer = self.shoot_delay
             return True
         return False
+
+    def shoot(self, tx=0, ty=0):
+        pass
 
 
 # ─────────── NEW: MINE LAYER (wave 60+) ───────────
@@ -707,6 +707,9 @@ class SniperEnemy(Enemy):
             self.shoot_timer = self.shoot_delay
             return True
         return False
+
+    def shoot(self, tx=0, ty=0):
+        pass
 
     def get_xp_drop_count(self): return max(3, 3 + self.max_health // 6)
 

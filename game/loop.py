@@ -210,8 +210,9 @@ def run_game(class_key, starting_wave=1):
     def start_wave(wave_num):
         nonlocal enemies_to_spawn, enemies_spawned, wave_active, spawn_timer, wave_banner_timer
         base_count = 5 + (wave_num * 3)
-        # +15% enemies every 10 levels
-        scale = 1.0 + (wave_num // 10) * 0.15
+        # +25% enemies every 10 levels, compounding
+        _tier = wave_num // 10
+        scale = 1.25 ** _tier
         enemies_to_spawn = int(base_count * scale)
         enemies_spawned = 0
         wave_active = True
@@ -496,10 +497,11 @@ def run_game(class_key, starting_wave=1):
                                     se._net_id = id(se)
                                     se.get_nearest_player_pos = make_nearest_player_finder(se)
                                     if _tier > 0:
-                                        se.max_health = int(se.max_health * (1.0 + _tier * 0.5))
+                                        hp_mult = 1.8 ** _tier
+                                        se.max_health = int(se.max_health * hp_mult)
                                         se.health = se.max_health
-                                        se.speed *= (1.0 + _tier * 0.12)
-                                        se.damage = int(se.damage * (1.0 + _tier * 0.3))
+                                        se.speed *= min(2.5, 1.0 + _tier * 0.15)
+                                        se.damage = int(se.damage * (1.5 ** _tier))
                                     all_sprites.add(se); enemies_grp.add(se)
                                     if gs.net_mode == "host" and gs.net_host:
                                         gs.net_host.broadcast(MSG_ENEMY_SPAWN, {
@@ -517,13 +519,19 @@ def run_game(class_key, starting_wave=1):
                             if e is not None:
                                 e._net_id = id(e)
                                 e.get_nearest_player_pos = make_nearest_player_finder(e)
-                                # Scale enemy stats every 10 waves
+                                # Scale enemy stats every 10 waves — exponential growth
                                 _tier = current_wave // 10
                                 if _tier > 0:
-                                    e.max_health = int(e.max_health * (1.0 + _tier * 0.5))
+                                    # HP scales exponentially: x1.8 per tier
+                                    hp_mult = 1.8 ** _tier
+                                    e.max_health = int(e.max_health * hp_mult)
                                     e.health = e.max_health
-                                    e.speed *= (1.0 + _tier * 0.12)
-                                    e.damage = int(e.damage * (1.0 + _tier * 0.3))
+                                    # Speed scales moderately: +15% per tier, capped at 2.5x
+                                    spd_mult = min(2.5, 1.0 + _tier * 0.15)
+                                    e.speed *= spd_mult
+                                    # Damage scales aggressively: x1.5 per tier
+                                    dmg_mult = 1.5 ** _tier
+                                    e.damage = int(e.damage * dmg_mult)
                                 all_sprites.add(e)
                                 enemies_grp.add(e)
                             enemies_spawned += 1
@@ -1090,22 +1098,28 @@ def run_game(class_key, starting_wave=1):
 
                         # Broadcast bullet to all other players (beam synced separately above)
                         if weapon != "beam" and gs.net_mode in ("host", "client"):
-                            bullet_data = {
-                                "weapon": weapon,
-                                "bx": player_obj.rect.centerx,
-                                "by": player_obj.rect.centery,
-                                "tx": target_x,
-                                "ty": target_y,
-                                "speed": player_obj.stats["bullet_speed"],
-                                "piercing": player_obj.stats["piercing"],
-                                "damage": player_obj.stats["damage"],
-                                "size": bsize,
-                                "color": list(player_obj.get_bullet_color()),
-                            }
-                            if gs.net_mode == "host" and gs.net_host:
-                                gs.net_host.broadcast(MSG_BULLET_FIRE, bullet_data)
-                            elif gs.net_mode == "client" and gs.net_client:
-                                gs.net_client.send(MSG_BULLET_FIRE, bullet_data)
+                            # Throttle bullet sends to max ~10/sec to prevent network flooding
+                            import time
+                            _last_bullet_send = getattr(run_game, '_last_bullet_send', 0)
+                            _now = time.monotonic()
+                            if _now - _last_bullet_send >= 0.1:  # 100ms min between bullet sends
+                                run_game._last_bullet_send = _now
+                                bullet_data = {
+                                    "weapon": weapon,
+                                    "bx": player_obj.rect.centerx,
+                                    "by": player_obj.rect.centery,
+                                    "tx": target_x,
+                                    "ty": target_y,
+                                    "speed": player_obj.stats["bullet_speed"],
+                                    "piercing": player_obj.stats["piercing"],
+                                    "damage": player_obj.stats["damage"],
+                                    "size": bsize,
+                                    "color": list(player_obj.get_bullet_color()),
+                                }
+                                if gs.net_mode == "host" and gs.net_host:
+                                    gs.net_host.broadcast(MSG_BULLET_FIRE, bullet_data)
+                                elif gs.net_mode == "client" and gs.net_client:
+                                    gs.net_client.send(MSG_BULLET_FIRE, bullet_data)
 
                     fire_cooldown = player_obj.stats["fire_rate"]
                     sounds.play_shoot()
@@ -1114,16 +1128,16 @@ def run_game(class_key, starting_wave=1):
 
             # Bullets/Lasers vs Enemies
             # ── Orbiter orbs intercept bullets first
-            for bullet in list(bullets_grp):
-                blocked = False
-                for enemy in enemies_grp:
-                    if isinstance(enemy, OrbiterEnemy):
+            orbiters = [e for e in enemies_grp if isinstance(e, OrbiterEnemy)]
+            if orbiters:
+                for bullet in list(bullets_grp):
+                    blocked = False
+                    for enemy in orbiters:
                         for ox, oy, idx in enemy.get_orb_positions():
                             if math.hypot(ox - bullet.rect.centerx, oy - bullet.rect.centery) < 14:
                                 destroyed = enemy.damage_orb(idx, getattr(bullet, '_net_damage', None) or player_obj.stats["damage"])
                                 bullet.kill(); blocked = True; break
-                    if blocked: break
-                if blocked: continue
+                        if blocked: break
 
             for bullet in list(bullets_grp):
                 hit_list = pygame.sprite.spritecollide(bullet, enemies_grp, False)
@@ -1310,17 +1324,25 @@ def run_game(class_key, starting_wave=1):
                                 "level": party_level,
                                 "is_big": is_big,
                             })
+                            # Pause game immediately for everyone
+                            gs.upgrade_paused_by = {"player_name": "Party", "level": party_level}
+                            gs.net_host.broadcast(MSG_UPGRADE_PAUSE, {"player_name": "Party", "level": party_level})
                             sounds.play_level_up()
                             # Host opens own upgrade menu
                             show_upgrade_menu(is_big, player_obj, all_sprites, enemies_grp, gs.net_mode, gs.net_host,
                                               gs.net_client)
-                            # Remove self from pending set
+                            # Host finished picking — remove self from pending
                             upgrade_pending_players.discard(0)
-                            # If no other players, resume immediately
+                            # Process any UPGRADE_DONE messages that arrived while menu was open
+                            if gs.net_host:
+                                for msg in gs.net_host.get_messages():
+                                    if msg.get("type") == MSG_UPGRADE_DONE:
+                                        done_id = msg.get("data", {}).get("player_id", -1)
+                                        upgrade_pending_players.discard(done_id)
+                            # If everyone done, resume
                             if not upgrade_pending_players:
+                                gs.upgrade_paused_by = None
                                 gs.net_host.broadcast(MSG_UPGRADE_RESUME, {})
-                            else:
-                                gs.net_host.broadcast(MSG_UPGRADE_PAUSE, {"player_name": "Party", "level": party_level})
                     elif gs.net_mode == "client":
                         # Send gem pickup to host
                         gs.net_client.send(MSG_GEM_COLLECT, {})
@@ -1380,13 +1402,19 @@ def run_game(class_key, starting_wave=1):
                                 upgrade_pending_players = {0}
                                 upgrade_pending_players.update(gs.net_host.get_remote_states().keys())
                                 gs.net_host.broadcast(MSG_PARTY_LEVEL_UP, {"level": party_level, "is_big": is_big})
+                                gs.upgrade_paused_by = {"player_name": "Party", "level": party_level}
+                                gs.net_host.broadcast(MSG_UPGRADE_PAUSE, {"player_name": "Party", "level": party_level})
                                 sounds.play_level_up()
                                 show_upgrade_menu(is_big, player_obj, all_sprites, enemies_grp, gs.net_mode, gs.net_host, gs.net_client)
                                 upgrade_pending_players.discard(0)
+                                if gs.net_host:
+                                    for msg in gs.net_host.get_messages():
+                                        if msg.get("type") == MSG_UPGRADE_DONE:
+                                            done_id = msg.get("data", {}).get("player_id", -1)
+                                            upgrade_pending_players.discard(done_id)
                                 if not upgrade_pending_players:
+                                    gs.upgrade_paused_by = None
                                     gs.net_host.broadcast(MSG_UPGRADE_RESUME, {})
-                                else:
-                                    gs.net_host.broadcast(MSG_UPGRADE_PAUSE, {"player_name": "Party", "level": party_level})
                         elif gs.net_mode == "client":
                             gs.net_client.send(MSG_GEM_COLLECT, {})
                     else:
@@ -1643,13 +1671,12 @@ def run_game(class_key, starting_wave=1):
         new_trail = []
         for trail_entry in dash_trail:
             pos, alpha, radius = trail_entry
-            if alpha > 0:
-                ts = pygame.Surface((radius*2+4, radius*2+4), pygame.SRCALPHA)
+            if alpha > 0 and radius > 0:
                 nc = player_obj.NEON_GLOW_COLOR if hasattr(player_obj, 'NEON_GLOW_COLOR') else (100,200,255)
-                # Ghostly afterimage
-                pygame.draw.circle(ts, (*nc, alpha//3), (radius+2, radius+2), radius+1)
-                pygame.draw.circle(ts, (255,255,255, alpha//5), (radius+2, radius+2), max(1, radius//2))
-                shake_surf.blit(ts, (pos[0]-radius-2, pos[1]-radius-2))
+                # Draw directly — simpler, no Surface allocation
+                fade = max(0, min(255, alpha // 3))
+                if fade > 20:
+                    pygame.draw.circle(shake_surf, nc, (int(pos[0]), int(pos[1])), radius + 1)
                 trail_entry[1] = max(0, alpha - 40)
                 trail_entry[2] = max(1, radius - 1)
                 new_trail.append(trail_entry)
@@ -1687,24 +1714,17 @@ def run_game(class_key, starting_wave=1):
 
         # Draw active beam (Arcanist) — supports bouncing segments
         if active_beam and active_beam["timer"] > 0:
-            bs = pygame.Surface((sw, sh), pygame.SRCALPHA)
             t_ratio = active_beam["timer"] / 15.0
             bw = int(active_beam["width"] * t_ratio)
-            ba = int(200 * t_ratio)
             segments = active_beam.get("segments", [])
             if not segments:
-                # Fallback for old format
                 segments = [(active_beam.get("start", (0,0)), active_beam.get("end", (0,0)))]
             for seg_start, seg_end in segments:
-                pygame.draw.line(bs, (255, 80, 80, int(ba * 0.3)),
-                                 seg_start, seg_end, bw + 12)
-                pygame.draw.line(bs, (255, 120, 120, int(ba * 0.6)),
-                                 seg_start, seg_end, bw + 4)
-                pygame.draw.line(bs, (255, 200, 200, ba),
-                                 seg_start, seg_end, max(2, bw))
-                pygame.draw.line(bs, (255, 255, 255, int(ba * 0.8)),
-                                 seg_start, seg_end, max(1, bw // 2))
-            shake_surf.blit(bs, (0, 0))
+                # Draw beams directly — no full-screen alpha surface
+                pygame.draw.line(shake_surf, (255, 80, 80), seg_start, seg_end, bw + 12)
+                pygame.draw.line(shake_surf, (255, 120, 120), seg_start, seg_end, bw + 4)
+                pygame.draw.line(shake_surf, (255, 200, 200), seg_start, seg_end, max(2, bw))
+                pygame.draw.line(shake_surf, (255, 255, 255), seg_start, seg_end, max(1, bw // 2))
             active_beam["timer"] -= dt
         draw_enemy_health_bars(shake_surf, enemies_grp)
 
@@ -1803,48 +1823,42 @@ def run_game(class_key, starting_wave=1):
 
         if gs.net_mode == "host" and gs.net_host:
             net_send_timer += 1
-            if net_send_timer >= 4 and not _net_paused:
+            if net_send_timer >= 2 and not _net_paused:
                 net_send_timer = 0
                 _full_timer = getattr(run_game, '_full_state_timer', 0) + 1
                 run_game._full_state_timer = _full_timer
-                # Fast position-only update (small packet)
+                # Compact position update (small packet)
                 state_data = {
                     "player_id": 0,
-                    "x": player_obj.rect.x,
-                    "y": player_obj.rect.y,
-                    "health": player_obj.current_health,
-                    "max_health": player_obj.stats["max_health"],
+                    "x": int(player_obj.rect.x),
+                    "y": int(player_obj.rect.y),
+                    "health": int(player_obj.current_health),
+                    "max_health": int(player_obj.stats["max_health"]),
                     "is_dead": spectating,
                 }
-                # Full state every ~1 second (60 frames) or first few frames
-                if _full_timer % 15 == 0 or _full_timer < 3:
+                # Full state every ~0.5 second or first few frames
+                if _full_timer % 8 == 0 or _full_timer < 3:
                     state_data["class"] = player_obj.CLASS_KEY
                     state_data["level"] = player_obj.level
                     state_data["username"] = gs.local_username
                     state_data["equipped_hat"] = player_obj.equipped_hat
                 gs.net_host.broadcast(MSG_PLAYER_STATE, state_data)
 
-            # Broadcast enemy positions every 8 frames (~7.5fps sync)
+            # Broadcast enemy positions every 3 frames (~20fps sync)
             enemy_timer = getattr(run_game, '_enemy_timer', 0)
             enemy_timer += 1
-            if enemy_timer >= 8 and not _net_paused:
+            if enemy_timer >= 3 and not _net_paused:
                 enemy_timer = 0
-                enemy_states = []
+                # Compact format: [id, x, y, hp] per enemy — much less bandwidth
+                enemy_arr = []
                 for e in enemies_grp:
-                    edata = {
-                        "enemy_id": getattr(e, '_net_id', id(e)),
-                        "x": e.rect.x,
-                        "y": e.rect.y,
-                        "health": e.health,
-                        "max_health": e.max_health,
-                    }
-                    # Send velocity for fast-moving enemies
-                    if hasattr(e, 'velocity_x'):
-                        edata["vx"] = e.velocity_x
-                        edata["vy"] = e.velocity_y
-                    enemy_states.append(edata)
-                if enemy_states:
-                    gs.net_host.broadcast(MSG_ENEMY_UPDATE, {"enemies": enemy_states})
+                    enemy_arr.append([
+                        getattr(e, '_net_id', id(e)),
+                        int(e.rect.x), int(e.rect.y),
+                        e.health,
+                    ])
+                if enemy_arr:
+                    gs.net_host.broadcast(MSG_ENEMY_UPDATE, {"e": enemy_arr})
 
                 # Broadcast helper (roomba/saw) positions
                 helper_states = []
@@ -1939,18 +1953,22 @@ def run_game(class_key, starting_wave=1):
                             "level": party_level,
                             "is_big": is_big,
                         })
+                        # Pause game immediately for everyone
+                        gs.upgrade_paused_by = {"player_name": "Party", "level": party_level}
+                        gs.net_host.broadcast(MSG_UPGRADE_PAUSE, {"player_name": "Party", "level": party_level})
                         sounds.play_level_up()
                         # Host opens own upgrade menu
                         show_upgrade_menu(is_big, player_obj, all_sprites, enemies_grp, gs.net_mode, gs.net_host, gs.net_client)
-                        # Remove self from pending
+                        # Host finished — remove self, drain queued UPGRADE_DONE
                         upgrade_pending_players.discard(0)
-                        # If no other players, resume immediately
+                        if gs.net_host:
+                            for msg in gs.net_host.get_messages():
+                                if msg.get("type") == MSG_UPGRADE_DONE:
+                                    done_id = msg.get("data", {}).get("player_id", -1)
+                                    upgrade_pending_players.discard(done_id)
                         if not upgrade_pending_players:
                             gs.upgrade_paused_by = None
                             gs.net_host.broadcast(MSG_UPGRADE_RESUME, {})
-                        else:
-                            gs.upgrade_paused_by = {"player_name": "Party", "level": party_level}
-                            gs.net_host.broadcast(MSG_UPGRADE_PAUSE, {"player_name": "Party", "level": party_level})
 
                 elif msg_type == MSG_UPGRADE_DONE:
                     # Client finished picking upgrade
@@ -1999,10 +2017,10 @@ def run_game(class_key, starting_wave=1):
                     gs.remote_players[pid].update()
 
             # --- Host-authoritative wave broadcasting ---
-            # Broadcast current wave state every second so clients stay in sync
+            # Broadcast current wave state frequently so clients stay in sync
             wave_bcast_timer = getattr(run_game, '_wave_bcast', 0) + 1
             run_game._wave_bcast = wave_bcast_timer
-            if wave_bcast_timer % 60 == 0:
+            if wave_bcast_timer % 10 == 0:
                 gs.net_host.broadcast(MSG_WAVE_START, {
                     "wave": current_wave,
                     "active": wave_active,
@@ -2014,7 +2032,7 @@ def run_game(class_key, starting_wave=1):
 
         elif gs.net_mode == "client" and gs.net_client:
             net_send_timer += 1
-            if net_send_timer >= 4 and not _net_paused:
+            if net_send_timer >= 2 and not _net_paused:
                 net_send_timer = 0
                 gs.net_client.send_player_state(
                     player_obj.rect.x, player_obj.rect.y,
@@ -2116,13 +2134,29 @@ def run_game(class_key, starting_wave=1):
                     enemies_grp.add(ghost)
 
                 elif msg_type == MSG_ENEMY_UPDATE:
-                    # Host sent enemy position updates — skip during pause
+                    # Host sent enemy position updates — compact format [id, x, y, hp]
                     if not _net_paused:
-                        enemy_list = data.get("enemies", [])
-                        for edata in enemy_list:
-                            eid = edata.get("enemy_id")
-                            if eid in gs.remote_enemies:
-                                gs.remote_enemies[eid].update_from_state(edata)
+                        # Support both compact array format and legacy dict format
+                        enemy_arr = data.get("e")
+                        if enemy_arr:
+                            for earr in enemy_arr:
+                                if len(earr) >= 4:
+                                    eid = earr[0]
+                                    if eid in gs.remote_enemies:
+                                        ghost = gs.remote_enemies[eid]
+                                        new_x, new_y, hp = earr[1], earr[2], earr[3]
+                                        ghost._vel_x = new_x - ghost.target_x
+                                        ghost._vel_y = new_y - ghost.target_y
+                                        ghost.target_x = new_x
+                                        ghost.target_y = new_y
+                                        ghost.health = hp
+                        else:
+                            # Legacy format
+                            enemy_list = data.get("enemies", [])
+                            for edata in enemy_list:
+                                eid = edata.get("enemy_id")
+                                if eid in gs.remote_enemies:
+                                    gs.remote_enemies[eid].update_from_state(edata)
 
                 elif msg_type == MSG_ENEMY_DEAD:
                     # Host says enemy died — remove ghost
