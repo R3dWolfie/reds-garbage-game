@@ -129,7 +129,14 @@ class PlayerBase(pygame.sprite.Sprite):
         _kb = _settings.config.get("keybinds", {})
         k_dash = _kb.get("dash", pygame.K_SPACE)
         mouse_buttons = pygame.mouse.get_pressed()
-        dash_input = keys[k_dash] or mouse_buttons[0]
+        # Grace period: ignore dash input for a few frames after menus close
+        # (prevents accidental dash when clicking upgrade options)
+        _grace = getattr(self, '_dash_grace', 0)
+        if _grace > 0:
+            self._dash_grace = _grace - 1
+            dash_input = False
+        else:
+            dash_input = keys[k_dash] or mouse_buttons[0]
         if dash_input:
             if use_mouse or mouse_buttons[0]:
                 mx, my = pygame.mouse.get_pos()
@@ -392,16 +399,12 @@ class PlayerBase(pygame.sprite.Sprite):
         return (255, 255, 0)  # Default yellow
 
     def draw_magnet_ring(self, surf):
-        """Draw the magnet radius as a neon ring."""
+        """Draw the magnet radius as a neon ring — direct draw, no Surface allocation."""
         radius = self.get_magnet_radius()
         if radius > 0:
-            ring_surf = pygame.Surface((radius * 2 + 4, radius * 2 + 4), pygame.SRCALPHA)
-            # Outer glow
-            pygame.draw.circle(ring_surf, (0, 255, 255, 15), (radius + 2, radius + 2), radius + 2)
-            pygame.draw.circle(ring_surf, (0, 255, 255, 25), (radius + 2, radius + 2), radius, 2)
-            # Inner bright ring
-            pygame.draw.circle(ring_surf, (0, 200, 255, 50), (radius + 2, radius + 2), radius, 1)
-            surf.blit(ring_surf, (self.rect.centerx - radius - 2, self.rect.centery - radius - 2))
+            cx, cy = self.rect.centerx, self.rect.centery
+            pygame.draw.circle(surf, (0, 50, 50), (cx, cy), radius, 2)
+            pygame.draw.circle(surf, (0, 80, 100), (cx, cy), radius, 1)
 
     # ═══════════════════ HAT DRAWING ═══════════════════
     _hat_tick = 0  # Animation timer (class-level, shared)

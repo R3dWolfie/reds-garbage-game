@@ -21,9 +21,9 @@ _trails = []
 _dmg_fonts = {}  # {size: font}
 _screen_overlay = None  # Reusable overlay surface
 
-MAX_PARTICLES = 300
-MAX_TRAILS = 80
-MAX_DAMAGE_NUMS = 30
+MAX_PARTICLES = 200
+MAX_TRAILS = 50
+MAX_DAMAGE_NUMS = 20
 
 
 def _get_dmg_font(size):
@@ -64,9 +64,9 @@ def spawn_ambient(sw, sh, count=3):
 
 # ═══════════════════ EFFECTS ═══════════════════
 
-def enemy_death_burst(x, y, color=(255, 80, 80), count=12, speed=5.0, size=5):
+def enemy_death_burst(x, y, color=(255, 80, 80), count=8, speed=5.0, size=5):
     # Cap particles
-    count = min(count, 12)
+    count = min(count, 8)
     for i in range(count):
         angle = (i / count) * math.pi * 2 + random.uniform(-0.2, 0.2)
         spd = random.uniform(speed * 0.3, speed)
@@ -100,7 +100,7 @@ def boss_death_burst(x, y, color=(255, 50, 50)):
         del _particles[:len(_particles) - MAX_PARTICLES]
 
 
-def hit_spark(x, y, color=(255, 255, 200), count=4):
+def hit_spark(x, y, color=(255, 255, 200), count=2):
     for _ in range(count):
         angle = random.uniform(0, math.pi*2)
         spd = random.uniform(2, 5)
@@ -223,8 +223,13 @@ def damage_number(x, y, amount, is_crit=False):
         return  # Drop if too many
     color = (255,255,50) if is_crit else (255,100,80)
     text = f"{amount}" if not is_crit else f"{amount}!"
-    _damage_nums.append({"x": x+random.randint(-8,8), "y": y-10, "text": text,
-        "color": color, "life": 35, "dy": -1.8 if is_crit else -1.3, "size": 20 if is_crit else 14})
+    sz = 20 if is_crit else 14
+    # Pre-render the text surface so we don't call font.render every frame
+    fnt = _get_dmg_font(sz)
+    ts = fnt.render(text, True, color)
+    ss = fnt.render(text, True, (0, 0, 0))
+    _damage_nums.append({"x": x+random.randint(-8,8), "y": y-10, "ts": ts, "ss": ss,
+        "color": color, "life": 35, "dy": -1.8 if is_crit else -1.3, "size": sz})
 
 
 # ═══════════════════ RENDERERS (optimized) ═══════════════════
@@ -373,13 +378,13 @@ def _draw_damage_nums(surf):
         d["life"] -= 1; d["y"] += d["dy"]; d["dy"] *= 0.96
         if d["life"] <= 0:
             continue
-        # Cached font lookup
-        fnt = _get_dmg_font(d["size"])
-        ts = fnt.render(d["text"], True, d["color"])
-        # Shadow
-        ss = fnt.render(d["text"], True, (0, 0, 0))
-        surf.blit(ss, (int(d["x"]) - ts.get_width()//2 + 1, int(d["y"]) + 1))
-        surf.blit(ts, (int(d["x"]) - ts.get_width()//2, int(d["y"])))
+        # Use pre-rendered surfaces
+        ts = d["ts"]
+        ss = d["ss"]
+        px = int(d["x"]) - ts.get_width()//2
+        py = int(d["y"])
+        surf.blit(ss, (px + 1, py + 1))
+        surf.blit(ts, (px, py))
         alive.append(d)
     _damage_nums.clear()
     _damage_nums.extend(alive)

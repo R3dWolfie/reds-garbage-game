@@ -1,13 +1,33 @@
 # remote_ghosts.py
 """Multiplayer ghost sprites for remote players and enemies.
-Optimized for smooth interpolation with high-frequency network updates."""
+Optimized for smooth interpolation with high-frequency network updates.
+Includes per-player magnet radius visualization."""
 
 import pygame
 import math
 import time
+import random
 from core.settings import *
 from core.sprite_loader import load_sprite, make_neon_sprite
 import core.game_state as _gs
+
+# Per-player magnet colors — soft, distinct, non-clashing
+# Index by player_id % len to cycle
+_MAGNET_PALETTE = [
+    (0, 220, 255),    # Cyan (local player keeps this)
+    (255, 120, 255),  # Pink
+    (255, 200, 60),   # Gold
+    (120, 255, 120),  # Lime
+    (255, 140, 80),   # Coral
+    (180, 140, 255),  # Lavender
+    (80, 255, 200),   # Mint
+    (255, 100, 100),  # Soft red
+]
+
+
+def _get_player_magnet_color(player_id):
+    """Get a unique magnet color for a player."""
+    return _MAGNET_PALETTE[player_id % len(_MAGNET_PALETTE)]
 
 
 class RemoteEnemyGhost(pygame.sprite.Sprite):
@@ -124,7 +144,8 @@ _SPRITE_MAP = {
 
 class RemotePlayerGhost(pygame.sprite.Sprite):
     """Visual representation of another player in multiplayer.
-    Uses time-based interpolation for smooth movement."""
+    Uses time-based interpolation for smooth movement.
+    Includes magnet radius visualization."""
 
     def __init__(self, player_id, class_key="default", username=None):
         super().__init__()
@@ -138,10 +159,15 @@ class RemotePlayerGhost(pygame.sprite.Sprite):
         self.max_health = 100
         self.is_dead = False
         self.equipped_hat = None
+        self.magnet_radius = 0
         self._hat_tick = 0
         self._vel_x = 0.0
         self._vel_y = 0.0
         self._last_update = time.monotonic()
+        self._magnet_color = _get_player_magnet_color(player_id)
+        self._magnet_tick = random.randint(0, 1000)  # Offset so they don't all pulse in sync
+        self._magnet_ring_cache = None
+        self._magnet_ring_radius = 0
         self._build_sprite(class_key)
 
     def _build_sprite(self, class_key):
@@ -169,6 +195,8 @@ class RemotePlayerGhost(pygame.sprite.Sprite):
             self.username = state["username"]
         if "equipped_hat" in state:
             self.equipped_hat = state["equipped_hat"]
+        if "magnet_r" in state:
+            self.magnet_radius = state["magnet_r"]
         new_class = state.get("class", self.class_key)
         if new_class != self.class_key:
             self.class_key = new_class
@@ -188,6 +216,80 @@ class RemotePlayerGhost(pygame.sprite.Sprite):
         else:
             self.rect.x = int(self.rect.x + dx * 0.4)
             self.rect.y = int(self.rect.y + dy * 0.4)
+        self._magnet_tick += 1
+
+    def draw_magnet(self, surf, gem_groups=None):
+        """Draw magnet radius and pull-line particles.
+
+        Uses orbiting dots along the ring edge instead of a full circle,
+        so multiple players' magnets don't overlap into ugly blobs.
+        Animated pull lines show gems being attracted.
+        """
+        radius = self.magnet_radius
+        if radius <= 0:
+            return
+        cx, cy = self.rect.centerx, self.rect.centery
+        mc = self._magnet_color
+        t = self._magnet_tick
+
+        # ── Orbiting dots along the ring edge (6-10 dots depending on radius)
+        num_dots = max(6, min(12, radius // 20))
+        base_alpha = 50 + int(25 * math.sin(t * 0.06))  # Gentle pulse
+        for i in range(num_dots):
+            angle = (i / num_dots) * math.pi * 2 + t * 0.02
+            dx = int(math.cos(angle) * radius)
+            dy = int(math.sin(angle) * radius)
+            # Size pulses slightly per dot
+            dot_sz = 2 + int(abs(math.sin(angle + t * 0.05)))
+            pygame.draw.circle(surf, mc, (cx + dx, cy + dy), dot_sz)
+
+        # ── Faint dashed ring (only every other segment, very subtle)
+        seg_count = max(8, radius // 12)
+        for i in range(seg_count):
+            if i % 3 != 0:  # Skip 2/3 of segments = dashed look
+                continue
+            a1 = (i / seg_count) * math.pi * 2 + t * 0.015
+            a2 = ((i + 1) / seg_count) * math.pi * 2 + t * 0.015
+            p1 = (cx + int(math.cos(a1) * radius), cy + int(math.sin(a1) * radius))
+            p2 = (cx + int(math.cos(a2) * radius), cy + int(math.sin(a2) * radius))
+            pygame.draw.line(surf, (*mc, base_alpha) if len(mc) == 3 else mc, p1, p2, 1)
+
+        # ── Pull lines: draw small animated streaks toward pulled gems
+        if gem_groups:
+            max_lines = 8  # Cap to prevent overdraw
+            lines_drawn = 0
+            for grp in gem_groups:
+                for gem in grp:
+                    if lines_drawn >= max_lines:
+                        break
+                    gx, gy = gem.rect.centerx, gem.rect.centery
+                    dist = math.hypot(gx - cx, gy - cy)
+                    if 10 < dist <= radius:
+                        lines_drawn += 1
+                        # Animated dash: a short streak moving from gem toward player
+                        # The streak position oscillates along the pull direction
+                        pull_frac = 1.0 - (dist / radius)  # 0 at edge, 1 at center
+                        # Streak travels from gem toward player
+                        streak_t = ((t * 3 + hash(id(gem))) % 60) / 60.0  # 0..1 cycle
+                        # Position along the line from gem to player
+                        sx = gx + (cx - gx) * streak_t
+                        sy = gy + (cy - gy) * streak_t
+                        # Short line segment in the pull direction
+                        seg_len = 6 + int(pull_frac * 4)
+                        dx_n = (cx - gx) / dist
+                        dy_n = (cy - gy) / dist
+                        ex = sx + dx_n * seg_len
+                        ey = sy + dy_n * seg_len
+                        # Fade based on distance: closer = brighter
+                        alpha_mult = 0.3 + pull_frac * 0.5
+                        line_c = (
+                            int(mc[0] * alpha_mult),
+                            int(mc[1] * alpha_mult),
+                            int(mc[2] * alpha_mult),
+                        )
+                        pygame.draw.line(surf, line_c, (int(sx), int(sy)), (int(ex), int(ey)), 1)
+                if lines_drawn >= max_lines:
+                    break
 
     def draw_label(self, surf):
         label = _gs.small_font.render(f"{self.username} Lv{self.level}", True, CYAN)

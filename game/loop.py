@@ -51,12 +51,19 @@ def run_game(class_key, starting_wave=1):
     hex_radius = 50
     hex_h = hex_radius * 2
     hex_w = int(hex_radius * math.sqrt(3))
+    # Pre-compute hex vertex offsets (6 corners, never changes)
+    _hex_offsets = []
+    for k in range(6):
+        angle_rad = math.radians(60 * k - 30)
+        _hex_offsets.append((hex_radius * math.cos(angle_rad), hex_radius * math.sin(angle_rad)))
     for row in range(-1, settings_module.SCREEN_HEIGHT // int(hex_h * 0.75) + 3):
         for col in range(-1, settings_module.SCREEN_WIDTH // hex_w + 3):
             x = col * hex_w + (row % 2) * (hex_w // 2)
             y = row * int(hex_h * 0.75)
             phase = (col * 0.3 + row * 0.5) % (2 * math.pi)
-            hex_grid.append((x, y, phase))
+            # Pre-compute vertex positions for this hex
+            pts = tuple((x + dx, y + dy) for dx, dy in _hex_offsets)
+            hex_grid.append((pts, phase))
 
     # Groups
     all_sprites = pygame.sprite.Group()
@@ -279,7 +286,22 @@ def run_game(class_key, starting_wave=1):
     active_beam = None  # {"start": (x,y), "end": (x,y), "timer": int, "width": float, "dmg": int}
     beam_hit_this_frame = set()  # Track enemies already hit by beam this frame
 
+    # Accurate FPS tracking
+    import time as _time_fps
+    _fps_frames = 0
+    _fps_last_time = _time_fps.perf_counter()
+    _real_fps = 60.0
+
     while True:
+        # Accurate FPS measurement
+        _fps_frames += 1
+        _fps_now = _time_fps.perf_counter()
+        _fps_elapsed = _fps_now - _fps_last_time
+        if _fps_elapsed >= 0.5:  # Update every 0.5s
+            _real_fps = _fps_frames / _fps_elapsed
+            _fps_frames = 0
+            _fps_last_time = _fps_now
+
         # Delta time: real ms since last frame, normalized to 60fps baseline
         raw_dt = clock.get_time()  # ms since last tick
         dt = max(0.016, min(4.0, raw_dt / 16.667))  # 16.667ms = 60fps, clamp to prevent insanity
@@ -575,22 +597,27 @@ def run_game(class_key, starting_wave=1):
             # ── XP Orb Condensing (every ~1.5 seconds) ──
             _condense_timer = getattr(run_game, '_condense_timer', 0) + 1
             run_game._condense_timer = _condense_timer
-            if _condense_timer >= 90 and len(gems_grp) > 30:
+            if _condense_timer >= 60 and len(gems_grp) > 15:
                 run_game._condense_timer = 0
                 gem_list = list(gems_grp)
                 used = set()
-                for i, g1 in enumerate(gem_list):
+
+                # Tier 1: condense 10 small cyan gems (xp < 10) → 1 red gem
+                small_gems = [g for g in gem_list if getattr(g, 'xp_value', 1) < 10]
+                for i, g1 in enumerate(small_gems):
                     if id(g1) in used:
                         continue
                     cluster = [g1]
                     cx, cy = g1.rect.centerx, g1.rect.centery
-                    for j in range(i + 1, len(gem_list)):
-                        g2 = gem_list[j]
+                    for j in range(i + 1, len(small_gems)):
+                        g2 = small_gems[j]
                         if id(g2) in used:
                             continue
-                        if abs(g2.rect.centerx - cx) < 60 and abs(g2.rect.centery - cy) < 60:
+                        if abs(g2.rect.centerx - cx) < 80 and abs(g2.rect.centery - cy) < 80:
                             cluster.append(g2)
-                    if len(cluster) >= 8:
+                            if len(cluster) >= 10:
+                                break
+                    if len(cluster) >= 10:
                         total_xp = sum(getattr(g, 'xp_value', 1) for g in cluster)
                         avg_x = sum(g.rect.centerx for g in cluster) // len(cluster)
                         avg_y = sum(g.rect.centery for g in cluster) // len(cluster)
@@ -598,6 +625,34 @@ def run_game(class_key, starting_wave=1):
                             used.add(id(g))
                             g.kill()
                         mega = ExpGem((avg_x, avg_y), xp_value=total_xp)
+                        mega._gem_tier = 1  # Red tier
+                        all_sprites.add(mega)
+                        gems_grp.add(mega)
+
+                # Tier 2: condense 10 red gems (10 <= xp < 100) → 1 green mega gem
+                red_gems = [g for g in gems_grp if 10 <= getattr(g, 'xp_value', 1) < 100 and id(g) not in used]
+                for i, g1 in enumerate(red_gems):
+                    if id(g1) in used:
+                        continue
+                    cluster = [g1]
+                    cx, cy = g1.rect.centerx, g1.rect.centery
+                    for j in range(i + 1, len(red_gems)):
+                        g2 = red_gems[j]
+                        if id(g2) in used:
+                            continue
+                        if abs(g2.rect.centerx - cx) < 120 and abs(g2.rect.centery - cy) < 120:
+                            cluster.append(g2)
+                            if len(cluster) >= 10:
+                                break
+                    if len(cluster) >= 10:
+                        total_xp = sum(getattr(g, 'xp_value', 1) for g in cluster)
+                        avg_x = sum(g.rect.centerx for g in cluster) // len(cluster)
+                        avg_y = sum(g.rect.centery for g in cluster) // len(cluster)
+                        for g in cluster:
+                            used.add(id(g))
+                            g.kill()
+                        mega = ExpGem((avg_x, avg_y), xp_value=total_xp)
+                        mega._gem_tier = 2  # Green tier
                         all_sprites.add(mega)
                         gems_grp.add(mega)
 
@@ -646,7 +701,8 @@ def run_game(class_key, starting_wave=1):
                     else:
                         p = EnemyProjectile(enemy.rect.center, (etx, ety))
                         all_sprites.add(p); enemy_projectiles_grp.add(p)
-                        enemy.shoot(etx, ety)
+                        if hasattr(enemy, 'shoot'):
+                            enemy.shoot(etx, ety)
 
                 # Ring of projectiles
                 if hasattr(enemy, 'can_ring') and enemy.can_ring():
@@ -887,7 +943,7 @@ def run_game(class_key, starting_wave=1):
             if fire_cooldown > 0:
                 fire_cooldown -= dt
 
-            if fire_cooldown <= 0 and not spectating and len(bullets_grp) < 500:
+            if fire_cooldown <= 0 and not spectating and len(bullets_grp) < 200:
                 # Get the SINGLE nearest enemy
                 targets = get_nearest_enemies(player_obj, enemies_grp, 1)
 
@@ -1139,9 +1195,33 @@ def run_game(class_key, starting_wave=1):
                                 bullet.kill(); blocked = True; break
                         if blocked: break
 
+            # Build spatial grid for enemies (cell size ~64px)
+            _CELL = 64
+            _enemy_grid = {}
+            for e in enemies_grp:
+                cx = e.rect.centerx // _CELL
+                cy = e.rect.centery // _CELL
+                key = (cx, cy)
+                if key not in _enemy_grid:
+                    _enemy_grid[key] = []
+                _enemy_grid[key].append(e)
+
+            _vfx_budget = 20  # Max hit sparks per frame to prevent particle explosion
+
             for bullet in list(bullets_grp):
-                hit_list = pygame.sprite.spritecollide(bullet, enemies_grp, False)
-                for enemy in hit_list:
+                # Only check enemies in nearby cells
+                bx = bullet.rect.centerx // _CELL
+                by = bullet.rect.centery // _CELL
+                nearby = []
+                for dx_c in range(-1, 2):
+                    for dy_c in range(-1, 2):
+                        cell = _enemy_grid.get((bx + dx_c, by + dy_c))
+                        if cell:
+                            nearby.extend(cell)
+
+                for enemy in nearby:
+                    if not bullet.rect.colliderect(enemy.rect):
+                        continue
                     if enemy in bullet.hit_enemies:
                         continue
                     # Phase wraiths are untouchable when phased out
@@ -1150,7 +1230,7 @@ def run_game(class_key, starting_wave=1):
                     # ShadowShade is untouchable when invisible
                     if isinstance(enemy, ShadowShade) and not enemy.visible:
                         continue
-                    bullet.hit_enemies.append(enemy)
+                    bullet.hit_enemies.add(enemy)
                     # Use network damage if this bullet came from a remote player
                     dmg = getattr(bullet, '_net_damage', None) or player_obj.stats["damage"]
                     # Diminishing returns for extra multishot bullets
@@ -1164,9 +1244,14 @@ def run_game(class_key, starting_wave=1):
                                 is_crit = True
                     dead = enemy.take_damage(dmg)
                     bullet.hits += 1
-                    # VFX: hit spark + damage number
-                    vfx.hit_spark(enemy.rect.centerx, enemy.rect.centery)
-                    vfx.damage_number(enemy.rect.centerx, enemy.rect.top, dmg, is_crit)
+                    # VFX: throttled hit sparks + damage numbers
+                    if _vfx_budget > 0:
+                        vfx.hit_spark(enemy.rect.centerx, enemy.rect.centery)
+                        vfx.damage_number(enemy.rect.centerx, enemy.rect.top, dmg, is_crit)
+                        _vfx_budget -= 1
+                    elif is_crit:
+                        # Always show crits
+                        vfx.damage_number(enemy.rect.centerx, enemy.rect.top, dmg, True)
                     if dead:
                         sounds.play_hit()
                         trigger_shake(6, 5)
@@ -1439,9 +1524,17 @@ def run_game(class_key, starting_wave=1):
                         add_gold(coin.value)
                         coin.kill()
 
-            # Saw enemy damage
+            # Saw enemy damage (use spatial grid)
             for saw in saws_grp:
-                for enemy in list(enemies_grp):
+                sx = saw.rect.centerx // _CELL
+                sy = saw.rect.centery // _CELL
+                _saw_nearby = []
+                for dx_c in range(-1, 2):
+                    for dy_c in range(-1, 2):
+                        cell = _enemy_grid.get((sx + dx_c, sy + dy_c))
+                        if cell:
+                            _saw_nearby.extend(cell)
+                for enemy in _saw_nearby:
                     if isinstance(enemy, PhaseWraith) and enemy.phased_out:
                         continue
                     if isinstance(enemy, ShadowShade) and not enemy.visible:
@@ -1632,25 +1725,22 @@ def run_game(class_key, starting_wave=1):
             consume_shake()
 
         # We blit everything to a temp surface then offset it
-        shake_surf = pygame.Surface((sw, sh))
+        # Reuse cached surfaces to avoid per-frame allocation
+        if not hasattr(run_game, '_shake_surf') or run_game._shake_surf.get_size() != (sw, sh):
+            run_game._shake_surf = pygame.Surface((sw, sh))
+            run_game._alpha_surf = pygame.Surface((sw, sh), pygame.SRCALPHA)
+        shake_surf = run_game._shake_surf
         shake_surf.fill((5, 5, 15))
 
         # ---- ANIMATED HEXAGON BACKGROUND ----
         hex_time += 0.02
-        for hx, hy, phase in hex_grid:
-            pulse = math.sin(hex_time + phase) * 0.5 + 0.5
-            alpha = int(8 + pulse * 18)
-            color_r = int(0 + pulse * 15)
+        _sin = math.sin  # Local ref for speed
+        for pts, phase in hex_grid:
+            pulse = _sin(hex_time + phase) * 0.5 + 0.5
+            color_r = int(pulse * 15)
             color_g = int(5 + pulse * 25)
             color_b = int(20 + pulse * 40)
-            points = []
-            for k in range(6):
-                angle_deg = 60 * k - 30
-                angle_rad = math.radians(angle_deg)
-                px = hx + hex_radius * math.cos(angle_rad)
-                py = hy + hex_radius * math.sin(angle_rad)
-                points.append((px, py))
-            pygame.draw.polygon(shake_surf, (color_r, color_g, color_b), points, 1)
+            pygame.draw.polygon(shake_surf, (color_r, color_g, color_b), pts, 1)
 
         # Magnet ring (behind sprites)
         if not spectating:
@@ -1732,40 +1822,30 @@ def run_game(class_key, starting_wave=1):
         for enemy in enemies_grp:
             if isinstance(enemy, LaserDrone):
                 if enemy.state == "charging":
-                    # Draw charge-up line (thin, flickering)
                     dx_l = enemy.beam_target[0] - enemy.rect.centerx
                     dy_l = enemy.beam_target[1] - enemy.rect.centery
                     d_l = math.hypot(dx_l, dy_l)
                     if d_l > 0:
                         end_x = enemy.rect.centerx + int((dx_l/d_l)*400)
                         end_y = enemy.rect.centery + int((dy_l/d_l)*400)
-                        a = int(80 * (1 - enemy.charge_timer / enemy.charge_time))
-                        ls = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-                        pygame.draw.line(ls, (0, 200, 255, a), enemy.rect.center, (end_x, end_y), 1)
-                        shake_surf.blit(ls, (0, 0))
+                        a_frac = 1 - enemy.charge_timer / enemy.charge_time
+                        c = int(200 * a_frac)
+                        pygame.draw.line(shake_surf, (0, c, 255), enemy.rect.center, (end_x, end_y), 1)
                 elif enemy.state == "firing":
-                    # Draw thick damaging beam
                     dx_l = enemy.beam_target[0] - enemy.rect.centerx
                     dy_l = enemy.beam_target[1] - enemy.rect.centery
                     d_l = math.hypot(dx_l, dy_l)
                     if d_l > 0:
                         end_x = enemy.rect.centerx + int((dx_l/d_l)*600)
                         end_y = enemy.rect.centery + int((dy_l/d_l)*600)
-                        ls = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-                        # Outer glow
-                        pygame.draw.line(ls, (0, 150, 255, 40), enemy.rect.center, (end_x, end_y), 12)
-                        pygame.draw.line(ls, (0, 200, 255, 80), enemy.rect.center, (end_x, end_y), 6)
-                        # Core
-                        pygame.draw.line(ls, (200, 240, 255, 200), enemy.rect.center, (end_x, end_y), 2)
-                        shake_surf.blit(ls, (0, 0))
+                        pygame.draw.line(shake_surf, (0, 60, 120), enemy.rect.center, (end_x, end_y), 12)
+                        pygame.draw.line(shake_surf, (0, 150, 255), enemy.rect.center, (end_x, end_y), 6)
+                        pygame.draw.line(shake_surf, (200, 240, 255), enemy.rect.center, (end_x, end_y), 2)
 
             # ── Leech heal aura indicator
             if isinstance(enemy, LeechPriest):
-                aura = pygame.Surface((enemy.heal_radius*2, enemy.heal_radius*2), pygame.SRCALPHA)
-                pygame.draw.circle(aura, (180, 50, 255, 15), (enemy.heal_radius, enemy.heal_radius), enemy.heal_radius)
-                pygame.draw.circle(aura, (180, 50, 255, 30), (enemy.heal_radius, enemy.heal_radius), enemy.heal_radius, 1)
-                shake_surf.blit(aura, (enemy.rect.centerx - enemy.heal_radius,
-                                       enemy.rect.centery - enemy.heal_radius))
+                r = enemy.heal_radius
+                pygame.draw.circle(shake_surf, (80, 20, 120), (enemy.rect.centerx, enemy.rect.centery), r, 1)
 
             # ── Charger bull telegraph line
             if isinstance(enemy, ChargerBull) and enemy.state == "telegraph":
@@ -1776,22 +1856,17 @@ def run_game(class_key, starting_wave=1):
                     end_x = enemy.rect.centerx + int((dx_t/d_t)*500)
                     end_y = enemy.rect.centery + int((dy_t/d_t)*500)
                     prog = 1 - (enemy.telegraph_timer / enemy.telegraph_time)
-                    ls = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-                    a = int(40 + 160 * prog)
-                    # Flashing warning line
                     if int(prog * 10) % 2 == 0:
-                        pygame.draw.line(ls, (255, 50, 30, a), enemy.rect.center, (end_x, end_y), 2)
-                    shake_surf.blit(ls, (0, 0))
+                        c = int(80 + 175 * prog)
+                        pygame.draw.line(shake_surf, (c, 20, 10), enemy.rect.center, (end_x, end_y), 2)
 
             # ── Orbiter shield orbs
             if isinstance(enemy, OrbiterEnemy):
                 for ox, oy, idx in enemy.get_orb_positions():
-                    orb_s = pygame.Surface((16, 16), pygame.SRCALPHA)
                     hp_ratio = enemy.orb_hp[idx] / max(1, (8 + current_wave // 5))
                     brightness = int(100 + 155 * hp_ratio)
-                    pygame.draw.circle(orb_s, (brightness, int(brightness*0.7), 0, 200), (8, 8), 6)
-                    pygame.draw.circle(orb_s, (255, 200, 80, 150), (8, 8), 6, 2)
-                    shake_surf.blit(orb_s, (ox - 8, oy - 8))
+                    pygame.draw.circle(shake_surf, (brightness, int(brightness*0.7), 0), (int(ox), int(oy)), 6)
+                    pygame.draw.circle(shake_surf, (255, 200, 80), (int(ox), int(oy)), 6, 2)
 
             # ── Sniper laser sight
             if isinstance(enemy, SniperEnemy):
@@ -1801,19 +1876,14 @@ def run_game(class_key, starting_wave=1):
                 if d_s > 0:
                     end_x = enemy.rect.centerx + int((dx_s/d_s)*500)
                     end_y = enemy.rect.centery + int((dy_s/d_s)*500)
-                    ls = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-                    # Thin red laser sight
-                    a_s = 30 if enemy.shoot_timer > 20 else int(30 + 100 * (1 - enemy.shoot_timer / 20))
-                    pygame.draw.line(ls, (255, 0, 0, a_s), enemy.rect.center, (end_x, end_y), 1)
-                    # Red dot on target
-                    pygame.draw.circle(ls, (255, 0, 0, a_s + 40), enemy.aim_target, 3)
-                    shake_surf.blit(ls, (0, 0))
+                    c = 30 if enemy.shoot_timer > 20 else int(30 + 100 * (1 - enemy.shoot_timer / 20))
+                    pygame.draw.line(shake_surf, (c, 0, 0), enemy.rect.center, (end_x, end_y), 1)
+                    pygame.draw.circle(shake_surf, (min(255, c + 40), 0, 0), (int(enemy.aim_target[0]), int(enemy.aim_target[1])), 3)
 
             # ── Parasite glow on buffed host
             if isinstance(enemy, ParasiteEnemy) and enemy.attached and enemy.host_enemy and enemy.host_enemy.alive():
-                glow = pygame.Surface((enemy.host_enemy.rect.w + 12, enemy.host_enemy.rect.h + 12), pygame.SRCALPHA)
-                pygame.draw.rect(glow, (200, 0, 200, 35), glow.get_rect(), border_radius=4)
-                shake_surf.blit(glow, (enemy.host_enemy.rect.x - 6, enemy.host_enemy.rect.y - 6))
+                hr = enemy.host_enemy.rect
+                pygame.draw.rect(shake_surf, (100, 0, 100), (hr.x - 3, hr.y - 3, hr.w + 6, hr.h + 6), 2, border_radius=4)
 
         # ========== NETWORKING ==========
         net_send_timer = getattr(run_game, '_net_timer', 0)
@@ -1842,6 +1912,7 @@ def run_game(class_key, starting_wave=1):
                     state_data["level"] = player_obj.level
                     state_data["username"] = gs.local_username
                     state_data["equipped_hat"] = player_obj.equipped_hat
+                    state_data["magnet_r"] = player_obj.get_magnet_radius()
                 gs.net_host.broadcast(MSG_PLAYER_STATE, state_data)
 
             # Broadcast enemy positions every 3 frames (~20fps sync)
@@ -2038,7 +2109,8 @@ def run_game(class_key, starting_wave=1):
                     player_obj.rect.x, player_obj.rect.y,
                     player_obj.current_health, player_obj.CLASS_KEY,
                     player_obj.level, player_obj.stats["max_health"],
-                    player_obj.equipped_hat, spectating
+                    player_obj.equipped_hat, spectating,
+                    magnet_r=player_obj.get_magnet_radius()
                 )
                 # Send helper positions less frequently (every ~15 ticks)
                 _hlp_timer = getattr(run_game, '_helper_timer_c', 0) + 1
@@ -2330,9 +2402,13 @@ def run_game(class_key, starting_wave=1):
         surf.blit(shake_surf, (shake_x, shake_y))
 
         # ========== DRAW REMOTE PLAYERS ==========
+        _gem_groups_for_magnet = [gems_grp, gold_grp, health_orbs_grp] if gems_grp else []
         for pid, ghost in gs.remote_players.items():
             if getattr(ghost, 'is_dead', False):
                 continue  # Don't draw dead players
+            # Draw magnet ring + pull lines BEHIND the player sprite
+            if hasattr(ghost, 'draw_magnet'):
+                ghost.draw_magnet(surf, gem_groups=_gem_groups_for_magnet)
             surf.blit(ghost.image, ghost.rect)
             ghost.draw_label(surf)
             if hasattr(ghost, 'draw_hat'):
@@ -2351,25 +2427,20 @@ def run_game(class_key, starting_wave=1):
             for h in helpers:
                 hx, hy = h.get("x", 0), h.get("y", 0)
                 if h.get("type") == "roomba":
-                    # Small orbiting circle
-                    hs = pygame.Surface((18, 18), pygame.SRCALPHA)
-                    pygame.draw.circle(hs, (*ghost_color, 140), (9, 9), 8)
-                    pygame.draw.circle(hs, (255, 255, 255, 80), (9, 9), 4)
-                    surf.blit(hs, (hx - 9, hy - 9))
+                    pygame.draw.circle(surf, ghost_color, (hx, hy), 8)
+                    pygame.draw.circle(surf, (255, 255, 255), (hx, hy), 4)
                 elif h.get("type") == "saw":
-                    # Spinning saw
                     sr = 12
-                    hs2 = pygame.Surface((sr*2+4, sr*2+4), pygame.SRCALPHA)
-                    pygame.draw.circle(hs2, (*ghost_color, 120), (sr+2, sr+2), sr, 2)
-                    pygame.draw.circle(hs2, (255, 255, 255, 100), (sr+2, sr+2), sr//2)
-                    surf.blit(hs2, (hx - sr - 2, hy - sr - 2))
+                    pygame.draw.circle(surf, ghost_color, (hx, hy), sr, 2)
+                    pygame.draw.circle(surf, (255, 255, 255), (hx, hy), sr//2)
 
         # ========== UPGRADE PAUSE OVERLAY ==========
         if gs.upgrade_paused_by and not spectating:
-            # Semi-transparent overlay
-            pause_overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
-            pause_overlay.fill((0, 0, 0, 150))
-            surf.blit(pause_overlay, (0, 0))
+            # Semi-transparent overlay (cached)
+            if not hasattr(run_game, '_pause_ov') or run_game._pause_ov.get_size() != (sw, sh):
+                run_game._pause_ov = pygame.Surface((sw, sh), pygame.SRCALPHA)
+                run_game._pause_ov.fill((0, 0, 0, 150))
+            surf.blit(run_game._pause_ov, (0, 0))
 
             # Message
             pname = gs.upgrade_paused_by.get("player_name", "Player")
@@ -2385,10 +2456,11 @@ def run_game(class_key, starting_wave=1):
 
         # ========== SPECTATE OVERLAY ==========
         if spectating:
-            # Dark vignette
-            spec_overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
-            spec_overlay.fill((0, 0, 0, 120))
-            surf.blit(spec_overlay, (0, 0))
+            # Dark vignette (cached)
+            if not hasattr(run_game, '_spec_ov') or run_game._spec_ov.get_size() != (sw, sh):
+                run_game._spec_ov = pygame.Surface((sw, sh), pygame.SRCALPHA)
+                run_game._spec_ov.fill((0, 0, 0, 120))
+            surf.blit(run_game._spec_ov, (0, 0))
 
             # Follow camera label (we can't truly move the camera but highlight who we're watching)
             if spectate_target_id and spectate_target_id in gs.remote_players:
@@ -2413,7 +2485,7 @@ def run_game(class_key, starting_wave=1):
             # FPS / Ping overlay
             if settings_module.config.get("show_fps", False):
                 _ping_val = getattr(gs, '_last_ping_ms', None)
-                draw_fps_ping(surf, clock.get_fps(), _ping_val if gs.net_mode else None)
+                draw_fps_ping(surf, _real_fps, _ping_val if gs.net_mode else None)
 
             # Dash cooldown bar (bottom-centre) - neon styled
             dash_ratio = player_obj.get_dash_cooldown_ratio()
@@ -2424,10 +2496,8 @@ def run_game(class_key, starting_wave=1):
             ready_w = int(bar_w * (1.0 - dash_ratio))
             if dash_ratio == 0:
                 bar_color = (0, 255, 255)
-                # Glow when ready
-                glow_s = pygame.Surface((bar_w + 8, bar_h + 8), pygame.SRCALPHA)
-                glow_s.fill((0, 255, 255, 20))
-                surf.blit(glow_s, (bar_x - 4, bar_y - 4))
+                # Glow when ready — draw directly
+                pygame.draw.rect(surf, (0, 40, 40), (bar_x - 4, bar_y - 4, bar_w + 8, bar_h + 8))
             else:
                 bar_color = (70, 130, 180)
             pygame.draw.rect(surf, bar_color, (bar_x, bar_y, ready_w, bar_h))
@@ -2476,10 +2546,11 @@ def run_game(class_key, starting_wave=1):
             a_fill = max(0, min(255, int(alpha * 0.15)))
             a_border = max(0, min(255, int(alpha * 0.5)))
             # Background
-            nbs = pygame.Surface((300, 32), pygame.SRCALPHA)
-            nbs.fill((rc[0], rc[1], rc[2], a_fill))
-            pygame.draw.rect(nbs, (rc[0], rc[1], rc[2], a_border), (0,0,300,32), 2, border_radius=6)
-            surf.blit(nbs, (sw//2 - 150, ny))
+            nbs_x = sw//2 - 150
+            # Background - direct draw
+            bg_c = (max(0,rc[0]//6), max(0,rc[1]//6), max(0,rc[2]//6))
+            pygame.draw.rect(surf, bg_c, (nbs_x, ny, 300, 32), border_radius=6)
+            pygame.draw.rect(surf, rc, (nbs_x, ny, 300, 32), 2, border_radius=6)
             # Text
             ht = _gs.small_font.render(f"NEW HAT: {notif['name']}", True, (rc[0], rc[1], rc[2]))
             rt = _gs.small_font.render(f"[{notif['rarity'].upper()}]", True, (rc[0], rc[1], rc[2]))

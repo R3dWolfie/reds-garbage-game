@@ -17,20 +17,17 @@ _hud_time = 0.0
 
 
 def _neon_bar(surf, x, y, w, h, ratio, bar_color, border_color, glow=True):
-    """Draw a neon-styled progress bar."""
+    """Draw a neon-styled progress bar — no Surface allocation."""
     pygame.draw.rect(surf, (15, 15, 25), (x, y, w, h))
     fill_w = int(w * max(0, min(1, ratio)))
     if fill_w > 0:
-        fill_surf = pygame.Surface((fill_w, h), pygame.SRCALPHA)
-        fill_surf.fill(bar_color)
-        surf.blit(fill_surf, (x, y))
+        pygame.draw.rect(surf, bar_color, (x, y, fill_w, h))
         if fill_w > 2:
             pygame.draw.line(surf, (min(255, bar_color[0] + 80), min(255, bar_color[1] + 80), min(255, bar_color[2] + 80)),
                              (x + fill_w - 1, y + 1), (x + fill_w - 1, y + h - 2), 1)
     if glow:
-        glow_surf = pygame.Surface((w + 6, h + 6), pygame.SRCALPHA)
-        pygame.draw.rect(glow_surf, (*border_color[:3], 20), (0, 0, w + 6, h + 6), 2)
-        surf.blit(glow_surf, (x - 3, y - 3))
+        gc = (max(0, border_color[0]//10), max(0, border_color[1]//10), max(0, border_color[2]//10))
+        pygame.draw.rect(surf, gc, (x - 3, y - 3, w + 6, h + 6), 2)
     pygame.draw.rect(surf, border_color, (x, y, w, h), 1)
 
 
@@ -90,10 +87,8 @@ def draw_ui(surf, player_obj, wave, enemy_group, net_mode=None, party_level=None
     _neon_bar(surf, 0, 0, sw, xp_bar_h, xp_ratio, (0, 80, 200), (0, 150, 255))
     pulse_x = int(xp_ratio * sw)
     if pulse_x > 5:
-        pulse_alpha = int(80 + math.sin(_hud_time * 4) * 40)
-        pulse_surf = pygame.Surface((s(6), xp_bar_h), pygame.SRCALPHA)
-        pulse_surf.fill((100, 200, 255, pulse_alpha))
-        surf.blit(pulse_surf, (pulse_x - s(3), 0))
+        pulse_bright = int(40 + math.sin(_hud_time * 4) * 20)
+        pygame.draw.rect(surf, (pulse_bright, pulse_bright + 40, pulse_bright + 60), (pulse_x - s(3), 0, s(6), xp_bar_h))
 
     xp_text = _font().render(f"LVL {current_level}  ({current_xp_val}/{xp_to_next})", True, (200, 230, 255))
     surf.blit(xp_text, (s(10), xp_bar_h + s(2)))
@@ -149,9 +144,7 @@ def draw_ui(surf, player_obj, wave, enemy_group, net_mode=None, party_level=None
     # Wave Info (top right) with neon box
     box_w, box_h = s(165), s(72)
     wave_box = pygame.Rect(sw - box_w - s(10), xp_bar_h + s(3), box_w, box_h)
-    bg_surf = pygame.Surface((wave_box.width, wave_box.height), pygame.SRCALPHA)
-    bg_surf.fill((0, 0, 0, 120))
-    surf.blit(bg_surf, wave_box.topleft)
+    pygame.draw.rect(surf, (0, 0, 0), wave_box)  # Solid black bg instead of alpha surface
     pygame.draw.rect(surf, (0, 255, 255), wave_box, 1)
 
     wx = wave_box.x + s(10)
@@ -179,9 +172,6 @@ def draw_boss_health_bar(surf, enemy_group):
             _neon_bar(surf, bar_x, bar_y, bar_w, bar_h, hp_ratio, (180, 0, 255), (220, 50, 255))
 
             txt = _boss_font().render("BOSS", True, (220, 50, 255))
-            glow = pygame.Surface((txt.get_width() + s(20), txt.get_height() + s(10)), pygame.SRCALPHA)
-            glow.fill((180, 0, 255, 30))
-            surf.blit(glow, (bar_x + bar_w // 2 - glow.get_width() // 2, bar_y - s(40)))
             surf.blit(txt, (bar_x + bar_w // 2 - txt.get_width() // 2, bar_y - s(35)))
 
 
@@ -196,9 +186,6 @@ def draw_wave_banner(surf, wave):
         color = (255, 165, 0)
         text = _title_font().render(f"WAVE {wave}", True, color)
 
-    glow = pygame.Surface((text.get_width() + s(40), text.get_height() + s(20)), pygame.SRCALPHA)
-    glow.fill((*color[:3], 25))
-    surf.blit(glow, (sw // 2 - glow.get_width() // 2, sh // 2 - s(110)))
     surf.blit(text, (sw // 2 - text.get_width() // 2, sh // 2 - s(100)))
 
 
@@ -242,9 +229,7 @@ def draw_fps_ping(surf, fps, ping_ms=None):
     box_x = sw - box_w - s(10)
     box_y = s(100)  # Below wave box area
 
-    bg = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
-    bg.fill((0, 0, 0, 100))
-    surf.blit(bg, (box_x, box_y))
+    pygame.draw.rect(surf, (0, 0, 0), (box_x, box_y, box_w, box_h))
 
     for i, (text, col) in enumerate(zip(lines, colors)):
         t = fnt.render(text, True, col)

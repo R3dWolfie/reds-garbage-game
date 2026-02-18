@@ -356,7 +356,20 @@ class SettingsMenu:
                     self.fps_index = len(avail_fps) - 1
                 fps_label = avail_fps_labels[self.fps_index]
                 fps_left, fps_right = self._selector(surf, cx, cy, content_w//2, "FPS LIMIT", fps_label, mx, my)
-                actual_fps = int(clock.get_fps())
+                _sfps_now = __import__('time').perf_counter()
+                _sfps_frames = getattr(self, '_sfps_frames', 0) + 1
+                _sfps_last = getattr(self, '_sfps_last', _sfps_now)
+                _sfps_val = getattr(self, '_sfps_val', 0)
+                if _sfps_now - _sfps_last >= 0.5:
+                    _sfps_val = _sfps_frames / (_sfps_now - _sfps_last)
+                    self._sfps_frames = 0
+                    self._sfps_last = _sfps_now
+                    self._sfps_val = _sfps_val
+                else:
+                    self._sfps_frames = _sfps_frames
+                    self._sfps_last = _sfps_last
+                    _sfps_val = getattr(self, '_sfps_val', 0)
+                actual_fps = int(_sfps_val)
                 fps_txt = _gs.small_font.render(f"Current: {actual_fps} fps", True, TEXT_DIM)
                 surf.blit(fps_txt, (cx + content_w//2 + 30, cy + 22))
                 cy += 60

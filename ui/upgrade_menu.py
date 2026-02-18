@@ -87,6 +87,9 @@ def _do_revive(player_obj):
 
     if gs.net_host:
         gs.net_host.broadcast(MSG_REVIVE, revive_data)
+        # Also update ghost on host side directly
+        if target_pid in getattr(gs, 'remote_players', {}):
+            gs.remote_players[target_pid].is_dead = False
     elif gs.net_client:
         gs.net_client.send(MSG_REVIVE, revive_data)
 
@@ -212,8 +215,11 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
     weights = []
     for item in pool:
         base_key = item["key"].replace("big_","")
-        count = player_obj.upgrade_counts.get(base_key, 0)
-        weights.append(1.0 + count * 0.6)
+        if item.get("_is_revive"):
+            weights.append(0.3)  # Rare weight — much less likely than normal upgrades
+        else:
+            count = player_obj.upgrade_counts.get(base_key, 0)
+            weights.append(1.0 + count * 0.6)
 
     options = []
     pool_copy = list(zip(pool, weights))
@@ -417,10 +423,11 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
         def _pick(idx):
             chosen = options[idx]
             if chosen.get("_is_revive"):
-                # Find nearest dead remote player and revive them
                 _do_revive(player_obj)
             else:
                 player_obj.apply_upgrade(chosen["key"])
+            # Prevent accidental dash from the click that selected the upgrade
+            player_obj._dash_grace = 15  # ~0.25s grace period
             if net_mode == "client" and net_client:
                 gs.upgrade_paused_by = None
                 net_client.send(MSG_UPGRADE_DONE, {})

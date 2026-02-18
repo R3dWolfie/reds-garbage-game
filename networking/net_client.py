@@ -206,9 +206,9 @@ class GameClient:
         """Send our chosen username to the host."""
         self.send(MSG_USERNAME, {"username": username})
 
-    def send_player_state(self, x, y, health, class_key, level, max_health=100, equipped_hat=None, is_dead=False):
+    def send_player_state(self, x, y, health, class_key, level, max_health=100, equipped_hat=None, is_dead=False, magnet_r=0):
         """Send our current state to the host (called every frame or every few frames)."""
-        self.send(MSG_PLAYER_STATE, {
+        data = {
             "x": x,
             "y": y,
             "health": health,
@@ -217,7 +217,10 @@ class GameClient:
             "level": level,
             "equipped_hat": equipped_hat,
             "is_dead": is_dead,
-        })
+        }
+        if magnet_r > 0:
+            data["magnet_r"] = magnet_r
+        self.send(MSG_PLAYER_STATE, data)
 
     def get_messages(self):
         """Get and clear queued messages."""

@@ -40,7 +40,7 @@ class Bullet(pygame.sprite.Sprite):
 
         self.piercing = piercing
         self.hits = 0
-        self.hit_enemies = []
+        self.hit_enemies = set()  # Use set for O(1) lookup
         self.bounces_left = bounces
 
         dx = target_pos[0] - start_pos[0]
@@ -156,8 +156,10 @@ class LaserBeam(pygame.sprite.Sprite):
 
 _gem_surface = None
 _mega_gem_surface = None
+_ultra_gem_surface = None
 
 def _get_gem_surface():
+    """Small cyan gem (1 xp)"""
     global _gem_surface
     if _gem_surface is None:
         _gem_surface = pygame.Surface((16, 20), pygame.SRCALPHA)
@@ -169,6 +171,7 @@ def _get_gem_surface():
     return _gem_surface
 
 def _get_mega_gem_surface():
+    """Red gem (10+ xp) - condensed from 10 cyan gems"""
     global _mega_gem_surface
     if _mega_gem_surface is None:
         _mega_gem_surface = pygame.Surface((24, 30), pygame.SRCALPHA)
@@ -179,13 +182,32 @@ def _get_mega_gem_surface():
         pygame.draw.polygon(_mega_gem_surface, (255, 200, 200), [(12, 7), (17, 15), (12, 23), (7, 15)])
     return _mega_gem_surface
 
+def _get_ultra_gem_surface():
+    """Green gem (100+ xp) - condensed from 10 red gems"""
+    global _ultra_gem_surface
+    if _ultra_gem_surface is None:
+        _ultra_gem_surface = pygame.Surface((32, 38), pygame.SRCALPHA)
+        pygame.draw.ellipse(_ultra_gem_surface, (50, 255, 50, 50), (0, 0, 32, 38))
+        points = [(16, 1), (30, 19), (16, 37), (2, 19)]
+        pygame.draw.polygon(_ultra_gem_surface, (40, 220, 40), points)
+        pygame.draw.polygon(_ultra_gem_surface, (100, 255, 100), points, 2)
+        pygame.draw.polygon(_ultra_gem_surface, (180, 255, 180), [(16, 9), (23, 19), (16, 29), (9, 19)])
+        # Inner sparkle
+        pygame.draw.circle(_ultra_gem_surface, (200, 255, 200), (16, 19), 4)
+    return _ultra_gem_surface
+
 
 class ExpGem(pygame.sprite.Sprite):
     def __init__(self, pos, xp_value=1):
         super().__init__()
         self.xp_value = xp_value
-        if xp_value >= 5:
+        self._gem_tier = 0
+        if xp_value >= 100:
+            self.image = _get_ultra_gem_surface()
+            self._gem_tier = 2
+        elif xp_value >= 10:
             self.image = _get_mega_gem_surface()
+            self._gem_tier = 1
         else:
             self.image = _get_gem_surface()
         self.rect = self.image.get_rect()
@@ -214,8 +236,9 @@ class ExpGem(pygame.sprite.Sprite):
             if self._alpha <= 0:
                 self.kill()
                 return
-            # Only create new surface if alpha changed significantly
-            if self.xp_value >= 5:
+            if self._gem_tier >= 2:
+                base = _get_ultra_gem_surface()
+            elif self._gem_tier >= 1 or self.xp_value >= 10:
                 base = _get_mega_gem_surface()
             else:
                 base = _get_gem_surface()
