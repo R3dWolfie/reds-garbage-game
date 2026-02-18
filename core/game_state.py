@@ -62,6 +62,8 @@ class DisplayManager:
         self._actual_h = 1080
         self._windowed = False
         self._render_surface = None
+        self._macos_fullscreen = False
+        self._draw_rect = None
         self.apply()
 
     def apply(self):
@@ -81,35 +83,24 @@ class DisplayManager:
 
         if fullscreen:
             if is_macos:
-                # macOS: use borderless window sized to avoid the notch
-                # Get usable screen area (excludes menu bar and notch)
+                # macOS: use borderless window that covers the entire screen
                 try:
                     desktop_sizes = pygame.display.get_desktop_sizes()
                     desk_w, desk_h = desktop_sizes[0] if desktop_sizes else (1920, 1080)
                 except Exception:
                     desk_w, desk_h = 1920, 1080
 
-                # Use 16:10 aspect ratio to avoid notch area
-                # Calculate the largest 16:10 area that fits
-                target_w = desk_w
-                target_h = int(desk_w * 10 / 16)
-                if target_h > desk_h:
-                    target_h = desk_h
-                    target_w = int(desk_h * 16 / 10)
-
+                os.environ['SDL_VIDEO_WINDOW_POS'] = '0,0'
                 flags = pygame.NOFRAME
                 try:
-                    # Position window at bottom of screen to avoid notch
-                    os.environ['SDL_VIDEO_WINDOW_POS'] = f'0,{desk_h - target_h}'
-                    self.screen = pygame.display.set_mode((target_w, target_h), flags)
-                except Exception:
                     self.screen = pygame.display.set_mode((desk_w, desk_h), flags)
+                except Exception:
+                    self.screen = pygame.display.set_mode((desk_w, desk_h))
 
-                actual_w, actual_h = self.screen.get_size()
-                if (actual_w, actual_h) != (internal_w, internal_h):
-                    self._render_surface = pygame.Surface((internal_w, internal_h))
-                else:
-                    self._render_surface = None
+                # Render surface is 1920x1080, will be scaled and centered
+                # with black bars to avoid the notch area
+                self._render_surface = pygame.Surface((internal_w, internal_h))
+                self._macos_fullscreen = True
             else:
                 # Windows/Linux: fullscreen at selected resolution
                 try:
@@ -125,14 +116,32 @@ class DisplayManager:
                     self._render_surface = pygame.Surface((internal_w, internal_h))
                 else:
                     self._render_surface = None
+                self._macos_fullscreen = False
         else:
-            # Windowed at selected resolution
-            flags = pygame.NOFRAME if borderless else 0
-            try:
-                self.screen = pygame.display.set_mode((display_w, display_h), flags)
-            except Exception:
-                self.screen = pygame.display.set_mode((1920, 1080))
-            self._render_surface = pygame.Surface((internal_w, internal_h))
+            if is_macos and borderless:
+                # macOS borderless: cover entire screen like fullscreen
+                try:
+                    desktop_sizes = pygame.display.get_desktop_sizes()
+                    desk_w, desk_h = desktop_sizes[0] if desktop_sizes else (1920, 1080)
+                except Exception:
+                    desk_w, desk_h = 1920, 1080
+
+                os.environ['SDL_VIDEO_WINDOW_POS'] = '0,0'
+                try:
+                    self.screen = pygame.display.set_mode((desk_w, desk_h), pygame.NOFRAME)
+                except Exception:
+                    self.screen = pygame.display.set_mode((desk_w, desk_h))
+                self._render_surface = pygame.Surface((internal_w, internal_h))
+                self._macos_fullscreen = True
+            else:
+                # Normal windowed
+                flags = pygame.NOFRAME if borderless else 0
+                try:
+                    self.screen = pygame.display.set_mode((display_w, display_h), flags)
+                except Exception:
+                    self.screen = pygame.display.set_mode((1920, 1080))
+                self._render_surface = pygame.Surface((internal_w, internal_h))
+                self._macos_fullscreen = False
 
         self._windowed = self._render_surface is not None
 
@@ -167,28 +176,77 @@ class DisplayManager:
         """Present the frame. Scale internal surface to actual screen."""
         if self._render_surface is not None:
             win_w, win_h = self.screen.get_size()
-            scaled = pygame.transform.smoothscale(self._render_surface, (win_w, win_h))
-            self.screen.blit(scaled, (0, 0))
+
+            if getattr(self, '_macos_fullscreen', False):
+                # macOS fullscreen: black background, fit game below notch
+                # Reserve top ~44 points for notch/menu bar area
+                notch_height = int(win_h * 0.035)  # ~3.5% of screen height
+                avail_h = win_h - notch_height
+                avail_w = win_w
+
+                # Scale 1920x1080 (16:9) to fit available area
+                int_w, int_h = self._render_surface.get_size()
+                scale_w = avail_w / int_w
+                scale_h = avail_h / int_h
+                scale = min(scale_w, scale_h)
+                draw_w = int(int_w * scale)
+                draw_h = int(int_h * scale)
+
+                # Center horizontally, push to bottom of available area
+                draw_x = (win_w - draw_w) // 2
+                draw_y = notch_height + (avail_h - draw_h) // 2
+
+                self.screen.fill((0, 0, 0))
+                scaled = pygame.transform.smoothscale(self._render_surface, (draw_w, draw_h))
+                self.screen.blit(scaled, (draw_x, draw_y))
+
+                # Store draw rect for mouse mapping
+                self._draw_rect = (draw_x, draw_y, draw_w, draw_h)
+            else:
+                scaled = pygame.transform.smoothscale(self._render_surface, (win_w, win_h))
+                self.screen.blit(scaled, (0, 0))
+                self._draw_rect = None
+        else:
+            self._draw_rect = None
         pygame.display.flip()
 
     def get_mouse_pos(self):
         """Get mouse position mapped to internal 1920x1080 coordinates."""
         mx, my = _original_get_pos()
         if self._render_surface is not None:
-            win_w, win_h = self.screen.get_size()
             int_w, int_h = self._render_surface.get_size()
-            if win_w > 0 and win_h > 0:
-                mx = int(mx * int_w / win_w)
-                my = int(my * int_h / win_h)
+            dr = getattr(self, '_draw_rect', None)
+            if dr:
+                # Map from screen coords to game content coords
+                dx, dy, dw, dh = dr
+                mx = int((mx - dx) * int_w / dw) if dw > 0 else mx
+                my = int((my - dy) * int_h / dh) if dh > 0 else my
+                # Clamp to internal resolution
+                mx = max(0, min(int_w - 1, mx))
+                my = max(0, min(int_h - 1, my))
+            else:
+                win_w, win_h = self.screen.get_size()
+                if win_w > 0 and win_h > 0:
+                    mx = int(mx * int_w / win_w)
+                    my = int(my * int_h / win_h)
         return mx, my
 
     def _scale_pos(self, pos):
         """Scale a screen position to internal coordinates."""
         if self._render_surface is not None:
-            win_w, win_h = self.screen.get_size()
             int_w, int_h = self._render_surface.get_size()
-            if win_w > 0 and win_h > 0:
-                return (int(pos[0] * int_w / win_w), int(pos[1] * int_h / win_h))
+            dr = getattr(self, '_draw_rect', None)
+            if dr:
+                dx, dy, dw, dh = dr
+                x = int((pos[0] - dx) * int_w / dw) if dw > 0 else pos[0]
+                y = int((pos[1] - dy) * int_h / dh) if dh > 0 else pos[1]
+                x = max(0, min(int_w - 1, x))
+                y = max(0, min(int_h - 1, y))
+                return (x, y)
+            else:
+                win_w, win_h = self.screen.get_size()
+                if win_w > 0 and win_h > 0:
+                    return (int(pos[0] * int_w / win_w), int(pos[1] * int_h / win_h))
         return pos
 
     def set_resolution(self, res):
