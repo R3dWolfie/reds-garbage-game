@@ -68,7 +68,7 @@ class PlayerBase(pygame.sprite.Sprite):
         # Leveling
         self.level = 1
         self.current_xp = 0
-        self.xp_to_next_level = 8
+        self.xp_to_next_level = 7  # int(5 + 1^1.8 * 2) = 7
 
         # Collision damage (for tank class)
         self.collision_damage = 0

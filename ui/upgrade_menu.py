@@ -37,6 +37,17 @@ _STAT_MAP = {
     "beam_bounce": ("CHAIN", (255,80,80)),
     "beam_width": ("WIDTH", (255,80,80)),
     "revive_ally": ("REVIVE", (255,215,0)),
+    # Class-specific
+    "bullet_storm": ("RATE", (100,200,255)),
+    "explosive_rounds": ("DMG", (255,80,80)),
+    "headshot": ("DMG", (255,80,80)),
+    "long_range": ("PIERCE", (0,255,255)),
+    "holy_aura": ("DMG", (255,80,80)),
+    "divine_shield": ("HP", (255,100,120)),
+    "ram_damage": ("DMG", (255,80,80)),
+    "fortress": ("HP", (255,100,120)),
+    "balanced_boost": ("DMG", (255,80,80)),
+    "survival_instinct": ("HP", (255,100,120)),
 }
 
 _auto_upgrade_on = False
@@ -145,16 +156,20 @@ def _get_stat_value(player_obj, key):
     base = key.replace("big_","")
     s = player_obj.stats
     if base == "speed": return str(s.get("speed","?"))
-    elif base == "fire_rate": return str(s.get("fire_rate","?"))
+    elif base == "fire_rate" or base == "bullet_storm": return str(s.get("fire_rate","?"))
     elif base == "bullet_speed": return str(s.get("bullet_speed","?"))
-    elif base == "max_health": return str(s.get("max_health","?"))
+    elif base == "max_health" or base in ("fortress","divine_shield","survival_instinct"):
+        return str(s.get("max_health","?"))
     elif base == "multishot": return str(s.get("multishot","?"))
-    elif base == "damage": return str(s.get("damage","?"))
-    elif base == "piercing": return str(s.get("piercing","?"))
+    elif base in ("damage","ram_damage","headshot","holy_aura","explosive_rounds","balanced_boost"):
+        return str(s.get("damage","?"))
+    elif base in ("piercing","long_range"): return str(s.get("piercing","?"))
     elif base == "magnet": return str(s.get("magnet_range","?"))
     elif base == "accuracy": return f"{s.get('accuracy',0):.1f}"
     elif base == "xp_gain": return f"{getattr(player_obj,'xp_multiplier',1.0):.0%}"
     elif base == "heal": return f"{player_obj.current_health}/{s.get('max_health','?')}"
+    elif base == "beam_width": return f"{s.get('bullet_size',1.0):.1f}"
+    elif base == "beam_bounce": return str(s.get("bullet_bounces", 0))
     return "?"
 
 
@@ -187,12 +202,18 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
 
     # Remove upgrades that have hit their cap
     s = player_obj.stats
-    if s.get("fire_rate", 99) <= 2:
-        pool = [u for u in pool if "fire_rate" not in u["key"]]
+    _fire_rate_capped = s.get("fire_rate", 99) <= 3
+    if _fire_rate_capped:
+        # Remove all upgrades that reduce fire_rate (including bullet_storm, big_storm)
+        _fire_rate_keys = {"fire_rate", "big_fire_rate", "bullet_storm", "big_storm"}
+        pool = [u for u in pool if u["key"] not in _fire_rate_keys]
     if s.get("bullet_size", 1.0) >= 3.0:
-        pool = [u for u in pool if "bullet_size" not in u["key"]]
+        _bsize_keys = {"bullet_size", "big_bullet_size", "beam_width", "big_beam"}
+        pool = [u for u in pool if u["key"] not in _bsize_keys]
     if s.get("multishot", 1) >= 10:
-        pool = [u for u in pool if "multishot" not in u["key"]]
+        # Remove all upgrades that add multishot (including bullet_storm, big_storm)
+        _multi_keys = {"multishot", "big_multishot", "bullet_storm", "big_storm"}
+        pool = [u for u in pool if u["key"] not in _multi_keys]
 
     # Revive Ally — only in multiplayer when a teammate is dead and not yet revived
     if gs.net_mode is not None and not is_big:
@@ -249,30 +270,62 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
         t += 0.04
         mx, my = pygame.mouse.get_pos()
 
-        # Background
+        # Background - game world underneath
         surf.fill(BG_DARK)
         all_spr.draw(surf)
         draw_enemy_health_bars(surf, enemy_grp)
+
+        # Dark overlay with vignette feel
         ov = pygame.Surface((sw, sh), pygame.SRCALPHA)
-        ov.fill((0, 0, 0, 210))
+        ov.fill((0, 0, 0, 220))
         surf.blit(ov, (0,0))
 
-        # Title — menu_font, matches other menus
+        # Animated accent line across top
+        line_y = max(10, sh // 2 - 180)
+        line_col = GOLD if is_big else ACCENT
+        pulse_w = int(60 + abs(math.sin(t * 2)) * 40)
+        line_center = sw // 2
+        pygame.draw.line(surf, (*line_col, 80) if len(line_col)==3 else line_col,
+                         (line_center - pulse_w, line_y), (line_center + pulse_w, line_y), 1)
+
+        # Title with subtle glow
         tc = GOLD if is_big else ACCENT
         ts = "BIG UPGRADE!" if is_big else "LEVEL UP!"
         tt = _gs.menu_font.render(ts, True, tc)
-        title_y = max(16, sh // 2 - 165)
+        title_y = line_y + 4
+        # Glow behind title
+        glow_s = pygame.Surface((tt.get_width()+20, tt.get_height()+10), pygame.SRCALPHA)
+        glow_a = int(20 + abs(math.sin(t*3))*15)
+        glow_s.fill((*tc, glow_a))
+        surf.blit(glow_s, (sw//2 - glow_s.get_width()//2, title_y - 3))
         surf.blit(tt, (sw//2 - tt.get_width()//2, title_y))
 
-        # Cards — scale to screen
+        # Level badge
+        lvl_text = f"Lv.{player_obj.level}"
+        lvl_r = _gs.small_font.render(lvl_text, True, tc)
+        lvl_x = sw//2 + tt.get_width()//2 + 8
+        lvl_y = title_y + tt.get_height()//2 - lvl_r.get_height()//2
+        lvl_bg = pygame.Surface((lvl_r.get_width()+10, lvl_r.get_height()+4), pygame.SRCALPHA)
+        lvl_bg.fill((*tc, 25))
+        surf.blit(lvl_bg, (lvl_x - 5, lvl_y - 2))
+        pygame.draw.rect(surf, tc, (lvl_x - 5, lvl_y - 2, lvl_r.get_width()+10, lvl_r.get_height()+4), 1, border_radius=4)
+        surf.blit(lvl_r, (lvl_x, lvl_y))
+
+        # Subtitle
+        sub_text = "Choose an upgrade" if not is_big else "Choose a powerful upgrade"
+        sub_r = _gs.desc_font.render(sub_text, True, TEXT_MID)
+        sub_y = title_y + tt.get_height() + 2
+        surf.blit(sub_r, (sw//2 - sub_r.get_width()//2, sub_y))
+
+        # Cards — scale to screen with better proportions
         num = len(options)
-        gap = 8
-        avail_w = sw - 50
-        card_w = min(150, (avail_w - (num-1)*gap) // num)
-        card_h = min(210, sh - 150)
+        gap = 12
+        avail_w = sw - 60
+        card_w = min(160, (avail_w - (num-1)*gap) // num)
+        card_h = min(220, sh - 170)
         total_w = num * card_w + (num-1) * gap
         sx = sw//2 - total_w//2
-        sy = title_y + tt.get_height() + 10
+        sy = sub_y + sub_r.get_height() + 12
 
         rects = []
         for i, opt in enumerate(options):
@@ -284,98 +337,133 @@ def show_upgrade_menu(is_big, player_obj, all_spr, enemy_grp, net_mode=None, net
             is_flash = flash_active and (flash_highlight % len(options) == i)
             bc = GOLD if is_big else card_colors[i % len(card_colors)]
 
-            # Card bg
+            # Outer glow on hover/flash
+            if hov or is_flash:
+                glow_pad = 6
+                glow_rect = pygame.Surface((card_w + glow_pad*2, card_h + glow_pad*2), pygame.SRCALPHA)
+                ga = 45 if is_flash else 30
+                pygame.draw.rect(glow_rect, (*bc, ga), (0, 0, card_w+glow_pad*2, card_h+glow_pad*2),
+                                 border_radius=8)
+                surf.blit(glow_rect, (cx - glow_pad, cy - glow_pad))
+
+            # Card background - glass effect
             cs = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
             if is_flash:
-                cs.fill((255, 255, 255, 40))
+                cs.fill((255, 255, 255, 35))
             elif hov:
-                cs.fill((*bc, 28))
+                # Gradient-ish fill for hover
+                cs.fill((bc[0]//10, bc[1]//10, bc[2]//10, 220))
+                # Top highlight
+                hl = pygame.Surface((card_w, card_h//3), pygame.SRCALPHA)
+                hl.fill((*bc, 12))
+                cs.blit(hl, (0, 0))
             else:
-                cs.fill((15, 17, 30, 200))
+                cs.fill((12, 14, 28, 210))
             surf.blit(cs, (cx, cy))
 
-            # Top accent
-            pygame.draw.rect(surf, bc, (cx, cy, card_w, 2))
+            # Top accent bar (thicker, with fade)
+            accent_h = 3
+            accent_s = pygame.Surface((card_w, accent_h), pygame.SRCALPHA)
+            accent_s.fill((*bc, 200 if hov else 140))
+            surf.blit(accent_s, (cx, cy))
+
             # Border
             bw = 2 if (hov or is_flash) else 1
-            bcolor = (255,255,255) if is_flash else (bc if hov else BORDER)
-            pygame.draw.rect(surf, bcolor, cr, bw, border_radius=5)
+            bcolor = (255,255,255) if is_flash else (bc if hov else (40, 45, 65))
+            pygame.draw.rect(surf, bcolor, cr, bw, border_radius=6)
 
-            # Keybind badge
-            kt = _gs.desc_font.render(str(i+1), True, bc if not is_flash else (255,255,255))
-            kbd_r = pygame.Rect(cx+4, cy+4, 14, 14)
-            pygame.draw.rect(surf, (20,24,40), kbd_r, 0, border_radius=3)
-            pygame.draw.rect(surf, bc if not is_flash else (255,255,255), kbd_r, 1, border_radius=3)
+            # Keybind badge (top-left, cleaner)
+            kbd_text = str(i+1)
+            kt = _gs.desc_font.render(kbd_text, True, bc if not is_flash else (255,255,255))
+            kbd_r = pygame.Rect(cx+5, cy+7, 16, 16)
+            kbd_bg = pygame.Surface((16, 16), pygame.SRCALPHA)
+            kbd_bg.fill((10, 12, 25, 180))
+            surf.blit(kbd_bg, kbd_r.topleft)
+            pygame.draw.rect(surf, bc if not is_flash else (255,255,255), kbd_r, 1, border_radius=4)
             surf.blit(kt, (kbd_r.centerx - kt.get_width()//2, kbd_r.centery - kt.get_height()//2))
 
-            # Icon
-            icon_y = cy + 26
-            _draw_upgrade_icon(surf, cx + card_w//2, icon_y, opt["key"], bc)
+            # Icon area - circle background
+            icon_cy = cy + accent_h + 22
+            icon_cx = cx + card_w // 2
+            icon_bg = pygame.Surface((32, 32), pygame.SRCALPHA)
+            ica = 35 if hov else 18
+            pygame.draw.circle(icon_bg, (*bc, ica), (16, 16), 16)
+            surf.blit(icon_bg, (icon_cx - 16, icon_cy - 16))
+            _draw_upgrade_icon(surf, icon_cx, icon_cy, opt["key"], bc if not hov else (255,255,255))
 
-            # Name (small_font, word-wrapped)
-            ny = icon_y + 16
+            # Name (small_font, word-wrapped, brighter on hover)
+            ny = icon_cy + 20
             words = opt["name"].split(); lines = []; cur = ""
             for w in words:
                 test = cur+" "+w if cur else w
-                if _gs.small_font.size(test)[0] < card_w-10: cur = test
+                if _gs.small_font.size(test)[0] < card_w - 14: cur = test
                 else: lines.append(cur); cur = w
             if cur: lines.append(cur)
             for j, line in enumerate(lines):
-                nt = _gs.small_font.render(line, True, (255,255,255) if hov else bc)
-                surf.blit(nt, (cx+card_w//2-nt.get_width()//2, ny+j*16))
+                nc = (255,255,255) if hov else bc
+                nt = _gs.small_font.render(line, True, nc)
+                surf.blit(nt, (cx + card_w//2 - nt.get_width()//2, ny + j*16))
 
             # Description (desc_font, word-wrapped)
-            dy = ny + len(lines)*16 + 3
+            dy = ny + len(lines)*16 + 5
             dwords = opt.get("desc","").split(); dlines = []; cur = ""
             for w in dwords:
                 test = cur+" "+w if cur else w
-                if _gs.desc_font.size(test)[0] < card_w-10: cur = test
+                if _gs.desc_font.size(test)[0] < card_w - 14: cur = test
                 else: dlines.append(cur); cur = w
             if cur: dlines.append(cur)
-            max_desc_lines = max(1, (card_h - (dy - cy) - 52) // 13)
+            max_desc_lines = max(1, (card_h - (dy - cy) - 56) // 13)
             for j, line in enumerate(dlines[:max_desc_lines]):
-                dt = _gs.desc_font.render(line, True, TEXT_MID if hov else TEXT_DIM)
-                surf.blit(dt, (cx+card_w//2-dt.get_width()//2, dy+j*13))
+                dc = TEXT_MID if hov else TEXT_DIM
+                dt = _gs.desc_font.render(line, True, dc)
+                surf.blit(dt, (cx + card_w//2 - dt.get_width()//2, dy + j*13))
 
-            # Bottom stat
-            bsy = cy + card_h - 42
-            pygame.draw.line(surf, BORDER, (cx+6, bsy), (cx+card_w-6, bsy), 1)
+            # Bottom stat area - separator + stat display
+            bsy = cy + card_h - 44
+            # Subtle gradient separator instead of hard line
+            sep_s = pygame.Surface((card_w - 16, 1), pygame.SRCALPHA)
+            sep_s.fill((255, 255, 255, 20))
+            surf.blit(sep_s, (cx + 8, bsy))
+
             base_key = opt["key"].replace("big_","")
             stat_info = _STAT_MAP.get(base_key, (base_key.upper()[:5], (180,180,200)))
             stat_label, stat_col = stat_info
-            sl = _gs.desc_font.render(stat_label, True, TEXT_DIM)
-            surf.blit(sl, (cx+card_w//2-sl.get_width()//2, bsy+3))
+            sl = _gs.desc_font.render(stat_label, True, (80, 85, 100))
+            surf.blit(sl, (cx + card_w//2 - sl.get_width()//2, bsy + 4))
             val = _get_stat_value(player_obj, opt["key"])
-            vt = _gs.small_font.render(val, True, stat_col)
-            surf.blit(vt, (cx+card_w//2-vt.get_width()//2, bsy+17))
+            vt = _gs.small_font.render(val, True, stat_col if hov else (*stat_col[:3],) if len(stat_col)==3 else stat_col)
+            surf.blit(vt, (cx + card_w//2 - vt.get_width()//2, bsy + 18))
 
-            # Count badge
+            # Count badge (top-right, sleeker)
             count = player_obj.upgrade_counts.get(base_key, 0)
             if count > 0:
-                badge = _gs.desc_font.render(f"x{count}", True, bc)
-                bw2 = badge.get_width()+6
-                br = pygame.Rect(cx+card_w-bw2-3, cy+4, bw2, 14)
-                pygame.draw.rect(surf, (20,24,40), br, 0, border_radius=3)
-                pygame.draw.rect(surf, bc, br, 1, border_radius=3)
-                surf.blit(badge, (br.centerx-badge.get_width()//2, br.centery-badge.get_height()//2))
+                badge_text = f"x{count}"
+                badge = _gs.desc_font.render(badge_text, True, bc)
+                bw2 = badge.get_width() + 8
+                br = pygame.Rect(cx + card_w - bw2 - 4, cy + 7, bw2, 16)
+                badge_bg = pygame.Surface((bw2, 16), pygame.SRCALPHA)
+                badge_bg.fill((10, 12, 25, 180))
+                surf.blit(badge_bg, br.topleft)
+                pygame.draw.rect(surf, bc, br, 1, border_radius=4)
+                surf.blit(badge, (br.centerx - badge.get_width()//2, br.centery - badge.get_height()//2))
 
-            # Hover scan line
+            # Hover scan line (subtler)
             if hov:
-                shy = int((math.sin(t*5)*0.5+0.5)*card_h)
-                sl2 = pygame.Surface((card_w-4, 1), pygame.SRCALPHA)
-                sl2.fill((*bc, 60))
-                surf.blit(sl2, (cx+2, cy+shy))
+                shy = int((math.sin(t*4)*0.5+0.5) * card_h)
+                sl2 = pygame.Surface((card_w - 6, 1), pygame.SRCALPHA)
+                sl2.fill((*bc, 40))
+                surf.blit(sl2, (cx + 3, cy + shy))
 
-        # Auto-upgrade toggle
-        auto_w, auto_h = 160, 24
-        auto_rect = pygame.Rect(sw//2-auto_w//2, sy+card_h+8, auto_w, auto_h)
+        # Auto-upgrade toggle (cleaner design)
+        auto_w, auto_h = 170, 26
+        auto_rect = pygame.Rect(sw//2-auto_w//2, sy+card_h+10, auto_w, auto_h)
         auto_hov = auto_rect.collidepoint(mx, my) and not flash_active
-        ac = NEON_GREEN if _auto_upgrade_on else (255, 200, 50)
+        ac = NEON_GREEN if _auto_upgrade_on else (180, 160, 80)
         abg = pygame.Surface((auto_w, auto_h), pygame.SRCALPHA)
-        abg.fill((*ac, 18 if (auto_hov or _auto_upgrade_on) else 6))
+        abg.fill((*ac, 20 if (auto_hov or _auto_upgrade_on) else 8))
         surf.blit(abg, auto_rect.topleft)
-        pygame.draw.rect(surf, ac if (auto_hov or _auto_upgrade_on) else TEXT_DIM,
-                         auto_rect, 1, border_radius=4)
+        pygame.draw.rect(surf, ac if (auto_hov or _auto_upgrade_on) else (50, 55, 70),
+                         auto_rect, 1, border_radius=5)
         _kb = settings_module.config.get("keybinds", {})
         _auto_key_code = _kb.get("auto_upgrade", pygame.K_q)
         _auto_key_name = pygame.key.name(_auto_key_code).upper()

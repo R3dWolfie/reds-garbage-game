@@ -58,12 +58,28 @@ def get_nearest_enemies(player_obj, enemy_group, count):
 
 
 def handle_enemy_death(enemy_obj, all_spr, gem_grp, orb_grp, net_mode=None, net_host=None, gold_grp=None):
+    # Guard: prevent double drops if called multiple times for same enemy
+    if getattr(enemy_obj, '_death_handled', False):
+        return
+    enemy_obj._death_handled = True
+
     xp_count = enemy_obj.get_xp_drop_count()
+    wave = getattr(enemy_obj, 'wave', 1)
+    # Scale gem value with wave: drop fewer but more valuable gems to reduce lag
+    # Wave 1-9: 1 XP each, Wave 10-19: 2 XP each, Wave 20-29: 3 XP each, etc.
+    gem_value = max(1, 1 + wave // 10)
+    total_xp = xp_count * gem_value  # Total XP stays proportional
+    # Drop fewer gems (min 1, max 8 per enemy to cap object count)
+    num_gems = max(1, min(8, (total_xp + gem_value - 1) // gem_value))
+    per_gem_xp = max(1, total_xp // num_gems)
+    # Remainder goes into first gem
+    remainder_xp = total_xp - per_gem_xp * num_gems
     gem_positions = []
-    for i in range(xp_count):
+    for i in range(num_gems):
         offset = (enemy_obj.rect.centerx + random.randint(-20, 20),
                   enemy_obj.rect.centery + random.randint(-20, 20))
-        gem = ExpGem(offset)
+        gv = per_gem_xp + (remainder_xp if i == 0 else 0)
+        gem = ExpGem(offset, xp_value=gv)
         all_spr.add(gem)
         gem_grp.add(gem)
         gem_positions.append(offset)

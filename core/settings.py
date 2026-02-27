@@ -478,7 +478,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Orbital vacuumbot that auto-collects XP gems",
         "icon_color": CYAN,
         "max_level": 15,
-        "costs": [10, 25, 50, 100, 200, 350, 550, 800, 1100, 1500, 2000, 2800, 3800, 5000, 7000],
+        "costs": [30, 75, 150, 300, 550, 900, 1400, 2100, 3000, 4200, 5800, 8000, 11000, 15000, 21000],
         "stat_per_level": "+1 vacuumbot",
     },
     {
@@ -487,7 +487,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Vacuumbots orbit faster and cover more ground",
         "icon_color": (0, 200, 200),
         "max_level": 10,
-        "costs": [8, 18, 35, 70, 140, 240, 380, 560, 800, 1100],
+        "costs": [25, 55, 100, 200, 400, 700, 1100, 1600, 2400, 3300],
         "stat_per_level": "+25% orbit speed",
     },
     {
@@ -496,7 +496,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Orbital saw blade that damages enemies on contact",
         "icon_color": (200, 200, 200),
         "max_level": 10,
-        "costs": [15, 35, 70, 140, 280, 480, 750, 1100, 1600, 2200],
+        "costs": [40, 100, 200, 400, 750, 1200, 1900, 2800, 4000, 5500],
         "stat_per_level": "+1 saw",
     },
     {
@@ -505,7 +505,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Each saw deals more damage per hit",
         "icon_color": (220, 180, 180),
         "max_level": 10,
-        "costs": [10, 22, 45, 90, 180, 300, 460, 660, 920, 1250],
+        "costs": [30, 65, 130, 260, 500, 850, 1300, 1900, 2700, 3700],
         "stat_per_level": "+2 damage",
     },
     {
@@ -514,7 +514,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Saws orbit faster around you",
         "icon_color": (180, 180, 220),
         "max_level": 5,
-        "costs": [8, 18, 35, 70, 140],
+        "costs": [25, 55, 100, 200, 400],
         "stat_per_level": "+20% orbit speed",
     },
     {
@@ -523,7 +523,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Chance for bullets to deal 2x damage",
         "icon_color": (255, 80, 80),
         "max_level": 10,
-        "costs": [10, 15, 25, 40, 60, 85, 115, 150, 200, 260],
+        "costs": [30, 50, 80, 120, 180, 260, 350, 460, 600, 780],
         "stat_per_level": "+5% crit chance",
     },
     {
@@ -532,7 +532,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Start each run with extra XP magnet range",
         "icon_color": (100, 200, 255),
         "max_level": 8,
-        "costs": [5, 12, 22, 38, 60, 90, 130, 180],
+        "costs": [15, 35, 65, 110, 180, 270, 390, 540],
         "stat_per_level": "+30px magnet range",
     },
     {
@@ -541,7 +541,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Gold coins are pulled toward you from further away",
         "icon_color": GOLD,
         "max_level": 5,
-        "costs": [8, 18, 35, 65, 120],
+        "costs": [25, 55, 100, 200, 360],
         "stat_per_level": "+40px gold pickup range",
     },
     {
@@ -550,7 +550,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Reduce all damage taken",
         "icon_color": STEEL_BLUE,
         "max_level": 10,
-        "costs": [12, 28, 55, 110, 220, 380, 580, 830, 1150, 1550],
+        "costs": [35, 80, 160, 320, 600, 1000, 1600, 2400, 3400, 4600],
         "stat_per_level": "-5% damage taken",
     },
     {
@@ -559,7 +559,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Chance to get double XP from gems",
         "icon_color": (150, 100, 255),
         "max_level": 5,
-        "costs": [10, 22, 45, 90, 180],
+        "costs": [30, 65, 130, 260, 500],
         "stat_per_level": "+10% double XP chance",
     },
     {
@@ -568,7 +568,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Start each run with bonus max HP",
         "icon_color": (255, 100, 150),
         "max_level": 10,
-        "costs": [8, 18, 35, 65, 120, 200, 320, 480, 700, 1000],
+        "costs": [25, 55, 100, 190, 350, 580, 900, 1350, 2000, 3000],
         "stat_per_level": "+15 max HP",
     },
     {
@@ -577,7 +577,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Enemies drop gold more often",
         "icon_color": (255, 200, 50),
         "max_level": 10,
-        "costs": [15, 35, 70, 140, 280, 460, 700, 1000, 1400, 1900],
+        "costs": [40, 100, 200, 400, 750, 1200, 1850, 2700, 3800, 5200],
         "stat_per_level": "+8% gold drop chance",
     },
     {
@@ -586,7 +586,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Revive once per run with 50% HP",
         "icon_color": (100, 255, 100),
         "max_level": 5,
-        "costs": [50, 150, 400, 800, 1500],
+        "costs": [150, 450, 1000, 2200, 4500],
         "stat_per_level": "+1 revival per run",
     },
     {
@@ -595,7 +595,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Vacuumbots scan further and roam further from you",
         "icon_color": (0, 220, 180),
         "max_level": 10,
-        "costs": [10, 22, 45, 90, 180, 320, 500, 750, 1100, 1600],
+        "costs": [30, 65, 130, 260, 500, 900, 1400, 2100, 3100, 4500],
         "stat_per_level": "+40% scan & leash range",
     },
     {
@@ -604,7 +604,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Vacuumbots zap nearby enemies for damage on contact",
         "icon_color": (0, 255, 200),
         "max_level": 10,
-        "costs": [15, 35, 65, 110, 180, 280, 420, 600, 850, 1200],
+        "costs": [40, 100, 190, 320, 520, 800, 1200, 1750, 2500, 3500],
         "stat_per_level": "+3 zap damage",
     },
     {
@@ -613,7 +613,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Shorter dash cooldown and longer dash distance",
         "icon_color": (100, 200, 255),
         "max_level": 20,
-        "costs": [8, 15, 25, 40, 60, 85, 115, 150, 200, 260, 340, 440, 560, 700, 880, 1100, 1400, 1800, 2300, 3000],
+        "costs": [25, 45, 75, 120, 180, 260, 350, 460, 600, 780, 1000, 1300, 1650, 2100, 2650, 3300, 4200, 5400, 6900, 9000],
         "stat_per_level": "-4f cooldown, +1f duration",
     },
     {
@@ -622,7 +622,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Slowly regenerate HP over time during combat",
         "icon_color": (50, 255, 120),
         "max_level": 10,
-        "costs": [12, 28, 55, 100, 170, 270, 400, 580, 800, 1100],
+        "costs": [35, 80, 160, 300, 500, 780, 1150, 1700, 2400, 3300],
         "stat_per_level": "+0.5 HP/sec",
     },
     {
@@ -631,7 +631,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Chance to phase through incoming damage",
         "icon_color": (200, 150, 255),
         "max_level": 10,
-        "costs": [15, 35, 65, 110, 180, 280, 420, 600, 850, 1200],
+        "costs": [45, 100, 190, 330, 540, 840, 1250, 1800, 2550, 3600],
         "stat_per_level": "+4% dodge chance",
     },
     {
@@ -640,7 +640,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Enemies that hit you take damage back",
         "icon_color": (255, 80, 150),
         "max_level": 8,
-        "costs": [10, 25, 50, 100, 200, 350, 550, 800],
+        "costs": [30, 75, 150, 300, 550, 950, 1500, 2300],
         "stat_per_level": "+5 thorns damage",
     },
     {
@@ -649,7 +649,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Start each run with bonus movement speed",
         "icon_color": (100, 255, 200),
         "max_level": 8,
-        "costs": [8, 18, 35, 65, 110, 180, 280, 420],
+        "costs": [25, 55, 100, 190, 320, 520, 800, 1200],
         "stat_per_level": "+1 move speed",
     },
     {
@@ -658,7 +658,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Start each run shooting faster",
         "icon_color": (255, 150, 50),
         "max_level": 8,
-        "costs": [10, 22, 45, 90, 170, 280, 430, 650],
+        "costs": [30, 65, 130, 260, 480, 800, 1250, 1900],
         "stat_per_level": "-8% fire delay",
     },
     {
@@ -667,7 +667,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Bullets bounce off screen edges back into the fray",
         "icon_color": (255, 255, 100),
         "max_level": 3,
-        "costs": [30, 100, 300],
+        "costs": [80, 300, 900],
         "stat_per_level": "+1 bounce",
     },
     {
@@ -676,7 +676,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Orbital saws are larger with bigger hitbox",
         "icon_color": (180, 200, 220),
         "max_level": 5,
-        "costs": [12, 28, 55, 110, 220],
+        "costs": [35, 80, 160, 320, 600],
         "stat_per_level": "+20% saw size",
     },
     {
@@ -685,7 +685,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Absorb one hit every few seconds",
         "icon_color": (80, 200, 255),
         "max_level": 5,
-        "costs": [25, 65, 150, 350, 700],
+        "costs": [75, 200, 450, 1000, 2100],
         "stat_per_level": "-3s shield recharge",
     },
     {
@@ -694,7 +694,7 @@ PERMA_SHOP_ITEMS = [
         "desc": "Enemies drop more and better loot",
         "icon_color": (255, 200, 100),
         "max_level": 8,
-        "costs": [10, 22, 45, 90, 170, 280, 430, 650],
+        "costs": [30, 65, 130, 260, 480, 800, 1250, 1900],
         "stat_per_level": "+8% extra drop chance",
     },
 ]

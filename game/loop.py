@@ -170,7 +170,7 @@ def run_game(class_key, starting_wave=1):
     # Party XP (shared in multiplayer, only tracked on host)
     party_level = 1
     party_xp = 0
-    party_xp_to_next = 8
+    party_xp_to_next = 7
     upgrade_pending_players = set()  # Set of player IDs waiting to pick upgrades
 
     # Helper function for enemies to find nearest player
@@ -260,11 +260,12 @@ def run_game(class_key, starting_wave=1):
 
     # ── Auto-level for wave skip: give player upgrades matching the wave
     if starting_wave > 1:
-        auto_levels = starting_wave  # ~1 level per wave
+        # ~1 level per 2 waves, with slight diminishing returns at high waves
+        auto_levels = max(1, int(starting_wave * 0.6))
         for lv in range(auto_levels):
             player_obj.level += 1
             player_obj.current_xp = 0
-            player_obj.xp_to_next_level = int(8 + player_obj.level ** 1.5 * 3)
+            player_obj.xp_to_next_level = int(5 + player_obj.level ** 1.8 * 2)
             # Every 5th level = big upgrade, otherwise normal
             if (lv + 1) % 5 == 0:
                 pick = random.choice(BIG_UPGRADE_POOL)
@@ -275,6 +276,10 @@ def run_game(class_key, starting_wave=1):
         player_obj.current_health = player_obj.stats["max_health"]
 
     start_wave(current_wave)
+
+    # Reset per-run function timers
+    run_game._condense_timer = 0
+    run_game._despawn_timer = 0
 
     # Dash trail visual: list of (pos, alpha, frame) tuples
     dash_trail = []
@@ -372,7 +377,7 @@ def run_game(class_key, starting_wave=1):
                     if enemies_spawned < enemies_to_spawn:
                         spawn_timer += dt
                         # Spawn faster at higher waves
-                        spawn_delay = max(2, int(BASE_SPAWN_DELAY - current_wave * 0.5))
+                        spawn_delay = max(6, int(BASE_SPAWN_DELAY - current_wave * 0.3))
                         if spawn_timer >= spawn_delay:
                             spawn_timer = 0
 
@@ -514,10 +519,13 @@ def run_game(class_key, starting_wave=1):
                             if enemy_type == "swarm":
                                 # Spawn a cluster of 3-5 swarm enemies
                                 _tier = current_wave // 10
-                                for _ in range(random.randint(3, 5)):
+                                _swarm_count = random.randint(3, 5)
+                                for _si in range(_swarm_count):
                                     se = SwarmEnemy(player_obj, current_wave)
                                     se._net_id = id(se)
                                     se.get_nearest_player_pos = make_nearest_player_finder(se)
+                                    # Spread swarm cluster along nearby positions
+                                    se._spawn_at_edge_spread(enemies_spawned + _si, enemies_to_spawn)
                                     if _tier > 0:
                                         hp_mult = 1.8 ** _tier
                                         se.max_health = int(se.max_health * hp_mult)
@@ -541,6 +549,8 @@ def run_game(class_key, starting_wave=1):
                             if e is not None:
                                 e._net_id = id(e)
                                 e.get_nearest_player_pos = make_nearest_player_finder(e)
+                                # Spread enemies across edges to prevent clustering
+                                e._spawn_at_edge_spread(enemies_spawned, enemies_to_spawn)
                                 # Scale enemy stats every 10 waves — exponential growth
                                 _tier = current_wave // 10
                                 if _tier > 0:
@@ -591,10 +601,11 @@ def run_game(class_key, starting_wave=1):
                 gems_grp.update()
                 health_orbs_grp.update()
                 enemy_projectiles_grp.update()
+                gold_grp.update()
             else:
                 all_sprites.update()
 
-            # ── XP Orb Condensing (every ~1.5 seconds) ──
+            # ── XP Orb Condensing (every ~1 second) ──
             _condense_timer = getattr(run_game, '_condense_timer', 0) + 1
             run_game._condense_timer = _condense_timer
             if _condense_timer >= 60 and len(gems_grp) > 15:
@@ -656,15 +667,15 @@ def run_game(class_key, starting_wave=1):
                         all_sprites.add(mega)
                         gems_grp.add(mega)
 
-            # ── Despawn old health orbs and gold (20s) ──
-            if _condense_timer == 45:  # Offset from gem condense
+            # ── Despawn old health orbs (independent timer, every ~1s) ──
+            _despawn_timer = getattr(run_game, '_despawn_timer', 0) + 1
+            run_game._despawn_timer = _despawn_timer
+            if _despawn_timer >= 60:
+                run_game._despawn_timer = 0
                 _now_ms = pygame.time.get_ticks()
                 for orb in list(health_orbs_grp):
                     if _now_ms - getattr(orb, 'spawn_time', _now_ms) > 20000:
                         orb.kill()
-                for coin in list(gold_grp):
-                    if _now_ms - getattr(coin, 'spawn_time', _now_ms) > 20000:
-                        coin.kill()
 
             # Reset frost slow each frame
             player_obj._frost_slowed = False
@@ -1376,7 +1387,7 @@ def run_game(class_key, starting_wave=1):
                             gs.net_client.send(MSG_ENEMY_DEAD, {"enemy_id": getattr(enemy, '_net_id', -1)})
                         elif gs.net_mode == "host" and gs.net_host:
                             gs.net_host.broadcast(MSG_ENEMY_DEAD, {"enemy_id": getattr(enemy, '_net_id', -1)})
-                    handle_enemy_death(enemy, all_sprites, gems_grp, health_orbs_grp, gs.net_mode, gs.net_host, gold_grp)
+                        handle_enemy_death(enemy, all_sprites, gems_grp, health_orbs_grp, gs.net_mode, gs.net_host, gold_grp)
 
             # Gems (dead players don't collect)
             if not spectating:
@@ -1399,7 +1410,7 @@ def run_game(class_key, starting_wave=1):
                         if party_xp >= party_xp_to_next:
                             party_level += 1
                             party_xp = 0
-                            party_xp_to_next = int(8 + party_level ** 1.5 * 3)
+                            party_xp_to_next = int(5 + party_level ** 1.8 * 2)
                             is_big = party_level % 5 == 0
                             # Reset pending players set (host + all connected clients)
                             upgrade_pending_players = {0}  # Host is player 0
@@ -1442,7 +1453,7 @@ def run_game(class_key, starting_wave=1):
                     if player_obj.current_xp >= player_obj.xp_to_next_level:
                         player_obj.level += 1
                         player_obj.current_xp = 0
-                        player_obj.xp_to_next_level = int(8 + player_obj.level ** 1.5 * 3)
+                        player_obj.xp_to_next_level = int(5 + player_obj.level ** 1.8 * 2)
                         sounds.play_level_up()
                         vfx.level_up_burst(player_obj.rect.centerx, player_obj.rect.centery)
                         trigger_shake(8, 6)
@@ -1454,6 +1465,7 @@ def run_game(class_key, starting_wave=1):
                                               gs.net_client)
 
             # Gold Coins (dead players don't collect)
+            coin_hits = []
             if not spectating:
               coin_hits = pygame.sprite.spritecollide(player_obj, gold_grp, True)
             for coin in coin_hits:
@@ -1482,7 +1494,7 @@ def run_game(class_key, starting_wave=1):
                             if party_xp >= party_xp_to_next:
                                 party_level += 1
                                 party_xp = 0
-                                party_xp_to_next = int(8 + party_level ** 1.5 * 3)
+                                party_xp_to_next = int(5 + party_level ** 1.8 * 2)
                                 is_big = party_level % 5 == 0
                                 upgrade_pending_players = {0}
                                 upgrade_pending_players.update(gs.net_host.get_remote_states().keys())
@@ -1511,7 +1523,7 @@ def run_game(class_key, starting_wave=1):
                         if player_obj.current_xp >= player_obj.xp_to_next_level:
                             player_obj.level += 1
                             player_obj.current_xp = 0
-                            player_obj.xp_to_next_level = int(8 + player_obj.level ** 1.5 * 3)
+                            player_obj.xp_to_next_level = int(5 + player_obj.level ** 1.8 * 2)
                             sounds.play_level_up()
                             is_big = player_obj.level % 5 == 0
                             show_upgrade_menu(is_big, player_obj, all_sprites, enemies_grp, gs.net_mode, gs.net_host, gs.net_client)
@@ -2014,7 +2026,7 @@ def run_game(class_key, starting_wave=1):
                     if party_xp >= party_xp_to_next:
                         party_level += 1
                         party_xp = 0
-                        party_xp_to_next = int(8 + party_level ** 1.5 * 3)
+                        party_xp_to_next = int(5 + party_level ** 1.8 * 2)
                         is_big = party_level % 5 == 0
                         # Reset pending players (host + all clients)
                         upgrade_pending_players = {0}
@@ -2343,7 +2355,7 @@ def run_game(class_key, starting_wave=1):
                     # Update party XP variables (nonlocal to update run_game scope)
                     party_level = data.get("level", 1)
                     party_xp = 0  # Reset after level up
-                    party_xp_to_next = int(8 + party_level ** 1.5 * 3)  # Increase threshold
+                    party_xp_to_next = int(5 + party_level ** 1.8 * 2)  # Increase threshold
                     is_big = data.get("is_big", False)
                     sounds.play_level_up()
                     show_upgrade_menu(is_big, player_obj, all_sprites, enemies_grp, gs.net_mode, gs.net_host, gs.net_client)

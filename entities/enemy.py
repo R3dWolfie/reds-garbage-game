@@ -7,7 +7,7 @@ from core.sprite_loader import load_sprite, make_neon_sprite
 class Enemy(pygame.sprite.Sprite):
     def __init__(self, player, wave):
         super().__init__()
-        self.player = player; self.is_boss = False
+        self.player = player; self.is_boss = False; self.wave = wave
         self.image = make_neon_sprite(load_sprite("enemy_basic.png",(30,30),RED,(30,30)),(255,30,60),glow_size=3)
         self.rect = self.image.get_rect()
         self.max_health = 1+(wave//3); self.health = self.max_health
@@ -25,6 +25,23 @@ class Enemy(pygame.sprite.Sprite):
         elif s==1: self.rect.x=random.randint(0,sw); self.rect.y=sh+40
         elif s==2: self.rect.x=-40; self.rect.y=random.randint(0,sh)
         else: self.rect.x=sw+40; self.rect.y=random.randint(0,sh)
+    def _spawn_at_edge_spread(self, spawn_index=0, total_spawns=1):
+        """Spread enemies across all 4 edges based on spawn index to prevent clustering."""
+        sw,sh=SCREEN_WIDTH,SCREEN_HEIGHT
+        # Distribute across edges: assign each enemy a specific edge sector
+        perimeter = 2*sw + 2*sh
+        # Use golden ratio offset to spread evenly without clumping
+        golden = 0.618033988749895
+        pos = ((spawn_index * golden) % 1.0) * perimeter
+        jitter = random.randint(-30, 30)  # Small random offset
+        if pos < sw:  # Top edge
+            self.rect.x = int(pos) + jitter; self.rect.y = -40
+        elif pos < sw + sh:  # Right edge
+            self.rect.x = sw + 40; self.rect.y = int(pos - sw) + jitter
+        elif pos < 2*sw + sh:  # Bottom edge
+            self.rect.x = int(pos - sw - sh) + jitter; self.rect.y = sh + 40
+        else:  # Left edge
+            self.rect.x = -40; self.rect.y = int(pos - 2*sw - sh) + jitter
     def get_xp_drop_count(self): return max(1, 1+self.max_health//5)
     def take_damage(self, amount):
         self.health -= amount
@@ -308,17 +325,21 @@ class ProximityMine(pygame.sprite.Sprite):
         self.proximity = 45; self.lifetime = 600  # 10 seconds then despawn
         self.exploded = False
 
+    @property
+    def _dt(self):
+        return get_dt()
+
     def update(self):
         if self.arm_timer > 0:
             self.arm_timer -= self._dt
             # Blink while arming
-            if self.arm_timer % 10 < 5:
+            if int(self.arm_timer) % 10 < 5:
                 self.image.set_alpha(100)
             else:
                 self.image.set_alpha(255)
         else:
             self.image.set_alpha(255)
-        self.lifetime -= 1
+        self.lifetime -= self._dt
         if self.lifetime <= 0: self.kill()
 
 

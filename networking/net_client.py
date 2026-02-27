@@ -181,26 +181,18 @@ class GameClient:
             self.connected = False
 
     def _flush_send(self):
-        """Try to send queued data without blocking."""
+        """Try to send queued data."""
         with self.lock:
             if not hasattr(self, '_send_queue') or not self._send_queue:
                 return
-            try:
-                self.socket.setblocking(False)
-                sent = self.socket.send(bytes(self._send_queue))
-                if sent > 0:
-                    self._send_queue = self._send_queue[sent:]
-            except BlockingIOError:
-                pass  # Would block — will retry next frame
-            except Exception as e:
-                print(f"[Client] Flush error: {e}")
-                self.connected = False
-            finally:
-                try:
-                    self.socket.setblocking(True)
-                    self.socket.settimeout(0.5)
-                except Exception:
-                    pass
+            data_to_send = bytes(self._send_queue)
+            self._send_queue = bytearray()
+        # Send outside lock to avoid blocking receive thread
+        try:
+            self.socket.sendall(data_to_send)
+        except Exception as e:
+            print(f"[Client] Flush error: {e}")
+            self.connected = False
 
     def send_username(self, username):
         """Send our chosen username to the host."""

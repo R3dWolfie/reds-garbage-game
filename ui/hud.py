@@ -33,35 +33,108 @@ def _neon_bar(surf, x, y, w, h, ratio, bar_color, border_color, glow=True):
 
 def draw_upgrade_counters(surf, player_obj):
     s = settings_module.S
-    sx_off = s(10)
-    sy_off = s(150)
-    header = _font().render("UPGRADES", True, (0, 255, 255))
-    surf.blit(header, (sx_off, sy_off - s(24)))
-    pygame.draw.line(surf, (0, 255, 255), (sx_off, sy_off - s(2)), (sx_off + header.get_width(), sy_off - s(2)), 1)
+    sx_off = s(8)
+    sy_off = s(155)
 
-    stat_display = [
-        ("SPD", "speed", player_obj.stats["speed"]),
-        ("RATE", "fire_rate", player_obj.stats["fire_rate"]),
-        ("BSPD", "bullet_speed", player_obj.stats["bullet_speed"]),
-        ("HP", "max_health", player_obj.stats["max_health"]),
-        ("MULT", "multishot", player_obj.stats["multishot"]),
-        ("DMG", "damage", player_obj.stats["damage"]),
-        ("PIER", "piercing", player_obj.stats["piercing"]),
-        ("MAG", "magnet", player_obj.get_magnet_radius()),
-        ("SIZE", "bullet_size", f"{player_obj.stats.get('bullet_size', 1.0):.1f}x"),
-        ("XPx", "xp_gain", f"{player_obj.stats.get('xp_gain', 1.0):.2f}x"),
-        ("ACC", "accuracy", f"{player_obj.stats.get('accuracy', 1.0):.1f}x"),
-    ]
+    # Map every upgrade key to a merged display name + color
+    # big_ variants fold into their base key
+    _BASE = {
+        "speed": ("Speed", (100,255,200)),
+        "fire_rate": ("Fire Rate", (100,200,255)),
+        "bullet_speed": ("Bullet Spd", (255,180,50)),
+        "max_health": ("Max HP", (255,100,120)),
+        "multishot": ("Multishot", (180,150,255)),
+        "damage": ("Damage", (255,80,80)),
+        "piercing": ("Pierce", (0,255,255)),
+        "magnet": ("Magnet", (255,215,0)),
+        "bullet_size": ("Bullet Size", (200,150,255)),
+        "xp_gain": ("XP Gain", (255,200,50)),
+        "accuracy": ("Accuracy", (150,255,150)),
+        # Class-specific (no big_ variant to merge)
+        "balanced_boost": ("Balanced", (57,255,20)),
+        "survival_instinct": ("Survival", (57,255,20)),
+        "ram_damage": ("Ram", (120,170,220)),
+        "fortress": ("Fortress", (120,170,220)),
+        "beam_width": ("Beam Width", (255,80,80)),
+        "beam_bounce": ("Chain", (255,100,100)),
+        "bullet_storm": ("Storm", (255,165,0)),
+        "explosive_rounds": ("Explosive", (255,165,0)),
+        "headshot": ("Headshot", (200,80,255)),
+        "long_range": ("Long Range", (200,80,255)),
+        "holy_aura": ("Aura", (255,220,100)),
+        "divine_shield": ("Shield", (255,220,100)),
+    }
+    # Map big_ keys to their base for merging
+    _BIG_TO_BASE = {
+        "big_speed": "speed", "big_fire_rate": "fire_rate",
+        "big_bullet_speed": "bullet_speed", "big_max_health": "max_health",
+        "big_multishot": "multishot", "big_damage": "damage",
+        "big_piercing": "piercing", "big_magnet": "magnet",
+        "big_bullet_size": "bullet_size", "big_xp_gain": "xp_gain",
+        "big_accuracy": "accuracy",
+        "big_balanced": "balanced_boost", "big_ram": "ram_damage",
+        "big_beam": "beam_width", "big_storm": "bullet_storm",
+        "big_snipe": "headshot", "big_divine": "divine_shield",
+    }
 
-    neon_colors = [(0, 255, 255), (57, 255, 20), (0, 150, 255), (255, 0, 200),
-                   (180, 0, 255), (255, 100, 0), (255, 255, 0)]
+    picks = getattr(player_obj, 'upgrade_picks', {})
+    if not picks:
+        return
 
-    line_h = s(18)
-    for i, (label, key, value) in enumerate(stat_display):
-        count = player_obj.upgrade_counts.get(key, 0)
-        color = neon_colors[i % len(neon_colors)] if count > 0 else (60, 60, 70)
-        text = _small_font().render(f"{label}: {value}  (x{count})", True, color)
-        surf.blit(text, (sx_off, sy_off + (i * line_h)))
+    # Merge big + normal counts
+    merged = {}  # base_key -> total count
+    for key, count in picks.items():
+        if count <= 0:
+            continue
+        base = _BIG_TO_BASE.get(key, key)
+        merged[base] = merged.get(base, 0) + count
+
+    if not merged:
+        return
+
+    # Header
+    header = _font().render("UPGRADES", True, (0, 200, 255))
+    surf.blit(header, (sx_off, sy_off))
+    line_top = sy_off + header.get_height() + s(2)
+    pygame.draw.line(surf, (0, 150, 200), (sx_off, line_top), (sx_off + s(140), line_top), 1)
+
+    # Single column list
+    row_h = s(18)
+    start_y = line_top + s(4)
+    fnt = _small_font()
+    bar_w = s(150)
+
+    # Sort by count descending
+    sorted_merged = sorted(merged.items(), key=lambda kv: -kv[1])
+
+    for i, (base_key, count) in enumerate(sorted_merged):
+        info = _BASE.get(base_key, (base_key.replace("_"," ").title(), (150,150,160)))
+        label, color = info
+
+        ty = start_y + i * row_h
+
+        # Background
+        bg_surf = pygame.Surface((bar_w, row_h - s(2)), pygame.SRCALPHA)
+        bg_surf.fill((10, 12, 24, 160))
+        surf.blit(bg_surf, (sx_off, ty))
+
+        # Left accent
+        pygame.draw.rect(surf, color, (sx_off, ty, s(2), row_h - s(2)))
+
+        # "Label x3" as one string so it never overlaps
+        if count > 1:
+            text = f"{label} x{count}"
+        else:
+            text = label
+        lt = fnt.render(text, True, color)
+        surf.blit(lt, (sx_off + s(6), ty + (row_h - s(2)) // 2 - lt.get_height() // 2))
+
+    # Stat summary
+    summary_y = start_y + len(sorted_merged) * row_h + s(4)
+    stats = player_obj.stats
+    summary = f"DMG {stats['damage']}  SPD {stats['speed']}  RATE {stats['fire_rate']}"
+    st = fnt.render(summary, True, (80, 90, 110))
+    surf.blit(st, (sx_off, summary_y))
 
 
 def draw_ui(surf, player_obj, wave, enemy_group, net_mode=None, party_level=None, party_xp=None, party_xp_to_next=None,

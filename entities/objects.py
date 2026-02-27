@@ -147,7 +147,7 @@ class LaserBeam(pygame.sprite.Sprite):
     def update(self):
         self.rect.x += self.dx * get_dt()
         self.rect.y += self.dy * get_dt()
-        self.lifetime -= 1
+        self.lifetime -= get_dt()
         if self.lifetime <= 0:
             self.kill()
         if not pygame.Rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT).colliderect(self.rect):
@@ -309,6 +309,20 @@ class GoldCoin(pygame.sprite.Sprite):
         elif dist > 0:
             self.rect.x += (dx / dist) * pull_speed
             self.rect.y += (dy / dist) * pull_speed
+
+    def update(self):
+        """Fade and despawn after 15 seconds."""
+        age_ms = pygame.time.get_ticks() - self.spawn_time
+        if age_ms > 13000:  # Start fading at 13s
+            fade_ratio = max(0, 1.0 - (age_ms - 13000) / 2000.0)
+            alpha = int(255 * fade_ratio)
+            if alpha <= 0:
+                self.kill()
+                return
+            if alpha < 250:
+                faded = _gold_coin_surface.copy()
+                faded.set_alpha(alpha)
+                self.image = faded
 
 
 class XPRoomba(pygame.sprite.Sprite):

@@ -1,7 +1,7 @@
 {
   "resolution": [
-    1920,
-    1080
+    3840,
+    2160
   ],
   "fullscreen": true,
   "borderless": false,
@@ -12,8 +12,8 @@
   "music_volume": 0.5,
   "username": "Red",
   "mouse_move": true,
-  "gold": 2866,
-  "highest_wave": 20,
+  "gold": 96844,
+  "highest_wave": 30,
   "equipped_hat": "soulflame",
   "collected_hats": [
     "bunnyears",
@@ -60,7 +60,8 @@
     "antlers",
     "crown",
     "shark",
-    "magichat"
+    "magichat",
+    "cosmichat"
   ],
   "perma_upgrades": {
     "roomba_count": 2,
